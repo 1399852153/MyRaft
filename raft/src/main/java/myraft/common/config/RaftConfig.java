@@ -13,7 +13,7 @@ public class RaftConfig {
     /**
      * 当前服务节点的id(集群内全局唯一)
      * */
-    private final int serverId;
+    private final String serverId;
 
     /**
      * 自己的配置
@@ -65,7 +65,7 @@ public class RaftConfig {
         this.majorityNum = this.raftNodeConfigList.size()/2 + 1;
     }
 
-    public int getServerId() {
+    public String getServerId() {
         return serverId;
     }
 

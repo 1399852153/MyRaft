@@ -2,21 +2,21 @@ package myraft.common.config;
 
 public class RaftNodeConfig {
 
-    private int serverId;
+    private String serverId;
     private String ip;
     private int port;
 
-    public RaftNodeConfig(int serverId) {
+    public RaftNodeConfig(String serverId) {
         this.serverId = serverId;
     }
 
-    public RaftNodeConfig(int serverId, String ip, int port) {
+    public RaftNodeConfig(String serverId, String ip, int port) {
         this.serverId = serverId;
         this.ip = ip;
         this.port = port;
     }
 
-    public int getServerId() {
+    public String getServerId() {
         return serverId;
     }
 

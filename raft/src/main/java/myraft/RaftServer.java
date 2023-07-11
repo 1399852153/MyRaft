@@ -24,7 +24,7 @@ public class RaftServer implements RaftService {
     /**
      * 当前服务节点的id(集群内全局唯一)
      * */
-    private final int serverId;
+    private final String serverId;
 
     /**
      * Raft服务端配置
@@ -44,7 +44,7 @@ public class RaftServer implements RaftService {
     /**
      * 当前服务认为的leader节点的Id
      * */
-    private volatile Integer currentLeader;
+    private volatile String currentLeader;
 
     /**
      * 集群中的其它raft节点服务
@@ -124,7 +124,7 @@ public class RaftServer implements RaftService {
 
     // ================================= get/set ============================================
 
-    public int getServerId() {
+    public String getServerId() {
         return serverId;
     }
 
@@ -144,7 +144,7 @@ public class RaftServer implements RaftService {
         return this.raftServerMetaDataPersistentModule.getCurrentTerm();
     }
 
-    public Integer getVotedFor() {
+    public String getVotedFor() {
         return this.raftServerMetaDataPersistentModule.getVotedFor();
     }
 
@@ -152,15 +152,15 @@ public class RaftServer implements RaftService {
         this.raftServerMetaDataPersistentModule.setCurrentTerm(currentTerm);
     }
 
-    public void setVotedFor(Integer votedFor) {
+    public void setVotedFor(String votedFor) {
         this.raftServerMetaDataPersistentModule.setVotedFor(votedFor);
     }
 
-    public Integer getCurrentLeader() {
+    public String getCurrentLeader() {
         return currentLeader;
     }
 
-    public void setCurrentLeader(Integer currentLeader) {
+    public void setCurrentLeader(String currentLeader) {
         this.currentLeader = currentLeader;
     }
 

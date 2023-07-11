@@ -1,9 +1,11 @@
 package myraft.api.model;
 
+import java.io.Serializable;
+
 /**
  * 请求投票的RPC接口参数对象
  */
-public class RequestVoteRpcParam {
+public class RequestVoteRpcParam implements Serializable {
 
     /**
      * 候选人的任期编号
@@ -13,7 +15,7 @@ public class RequestVoteRpcParam {
     /**
      * 候选人的Id
      * */
-    private int candidateId;
+    private String candidateId;
 
     /**
      * 候选人最新日志的索引编号
@@ -33,11 +35,11 @@ public class RequestVoteRpcParam {
         this.term = term;
     }
 
-    public int getCandidateId() {
+    public String getCandidateId() {
         return candidateId;
     }
 
-    public void setCandidateId(int candidateId) {
+    public void setCandidateId(String candidateId) {
         this.candidateId = candidateId;
     }
 

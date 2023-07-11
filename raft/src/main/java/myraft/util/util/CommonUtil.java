@@ -13,7 +13,7 @@ import java.util.concurrent.TimeUnit;
 
 public class CommonUtil {
 
-    private static Logger logger = LoggerFactory.getLogger(CommonUtil.class);
+    private static final Logger logger = LoggerFactory.getLogger(CommonUtil.class);
 
     /**
      * 并发的获得future列表的结果
@@ -27,9 +27,9 @@ public class CommonUtil {
         for(Future<T> futureItem : futureList){
             threadPool.execute(()->{
                 try {
-//                    logger.info(info + " concurrentGetRpcFutureResult start!");
+                    logger.debug(info + " concurrentGetRpcFutureResult start!");
                     T result = futureItem.get(timeout,timeUnit);
-//                    logger.info(info + " concurrentGetRpcFutureResult end!");
+                    logger.debug(info + " concurrentGetRpcFutureResult end!");
 
                     resultList.add(result);
                 } catch (Exception e) {

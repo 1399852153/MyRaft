@@ -44,7 +44,7 @@ public class HeartBeatBroadcastTask implements Runnable{
 
         processAutoFail();
 
-//        logger.info("do HeartBeatBroadcast end {}",currentServer.getServerId());
+        logger.debug("do HeartBeatBroadcast end {}",currentServer.getServerId());
     }
 
     /**
@@ -52,7 +52,7 @@ public class HeartBeatBroadcastTask implements Runnable{
      * @return 是否大多数节点依然认为自己是leader
      * */
     public static boolean doHeartBeatBroadcast(RaftServer currentServer){
-//        logger.info("do HeartBeatBroadcast start {}",currentServer.getServerId());
+        logger.info("do HeartBeatBroadcast start {}",currentServer.getServerId());
 
         // 先刷新自己的心跳时间
         currentServer.getRaftLeaderElectionModule().refreshLastHeartbeatTime();
@@ -70,6 +70,7 @@ public class HeartBeatBroadcastTask implements Runnable{
             Future<AppendEntriesRpcResult> future = currentServer.getRaftHeartBeatBroadcastModule().getRpcThreadPool().submit(
                 ()-> {
                     AppendEntriesRpcResult rpcResult = node.appendEntries(appendEntriesRpcParam);
+                    // rpc交互时任期高于当前节点任期的处理
                     currentServer.processCommunicationHigherTerm(rpcResult.getTerm());
                     return rpcResult;
                 }

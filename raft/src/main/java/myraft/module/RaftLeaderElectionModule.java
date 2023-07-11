@@ -33,7 +33,7 @@ public class RaftLeaderElectionModule {
         this.lastHeartbeatTime = new Date();
         this.scheduledExecutorService = Executors.newScheduledThreadPool(3);
         this.rpcThreadPool = Executors.newFixedThreadPool(
-                Math.max(currentServer.getOtherNodeInCluster().size(),1) * 2);
+                Math.max(currentServer.getOtherNodeInCluster().size() * 2,1));
 
         registerHeartBeatTimeoutCheckTaskWithRandomTimeout();
     }

@@ -11,12 +11,12 @@ public class RaftServerMetaData {
      * 当前服务器在此之前投票给了谁？
      * (候选者的serverId，如果还没有投递就是null)
      * */
-    private Integer votedFor;
+    private String votedFor;
 
     public RaftServerMetaData() {
     }
 
-    public RaftServerMetaData(int currentTerm, Integer votedFor) {
+    public RaftServerMetaData(int currentTerm, String votedFor) {
         this.currentTerm = currentTerm;
         this.votedFor = votedFor;
     }
@@ -29,11 +29,11 @@ public class RaftServerMetaData {
         this.currentTerm = currentTerm;
     }
 
-    public Integer getVotedFor() {
+    public String getVotedFor() {
         return votedFor;
     }
 
-    public void setVotedFor(Integer votedFor) {
+    public void setVotedFor(String votedFor) {
         this.votedFor = votedFor;
     }
 

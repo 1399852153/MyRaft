@@ -19,7 +19,7 @@ public class RaftServerMetaDataPersistentModule {
      * 当前服务器在此之前投票给了谁？
      * (候选者的serverId，如果还没有投递就是null)
      * */
-    private volatile Integer votedFor;
+    private volatile String votedFor;
 
     private final File persistenceFile;
 
@@ -27,7 +27,7 @@ public class RaftServerMetaDataPersistentModule {
     private final ReentrantReadWriteLock.WriteLock writeLock = reentrantLock.writeLock();
     private final ReentrantReadWriteLock.ReadLock readLock = reentrantLock.readLock();
 
-    public RaftServerMetaDataPersistentModule(int serverId) {
+    public RaftServerMetaDataPersistentModule(String serverId) {
         String userPath = System.getProperty("user.dir") + File.separator + serverId;
 
         this.persistenceFile = new File(userPath + File.separator + "raftServerMetaData-" + serverId + ".txt");
@@ -60,7 +60,7 @@ public class RaftServerMetaDataPersistentModule {
         }
     }
 
-    public Integer getVotedFor() {
+    public String getVotedFor() {
         readLock.lock();
         try {
             return votedFor;
@@ -69,7 +69,7 @@ public class RaftServerMetaDataPersistentModule {
         }
     }
 
-    public void setVotedFor(Integer votedFor) {
+    public void setVotedFor(String votedFor) {
         writeLock.lock();
         try {
             this.votedFor = votedFor;

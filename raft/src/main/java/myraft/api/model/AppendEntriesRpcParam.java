@@ -1,9 +1,11 @@
 package myraft.api.model;
 
+import java.io.Serializable;
+
 /**
  * 追加日志条目的RPC接口参数对象
  * */
-public class AppendEntriesRpcParam {
+public class AppendEntriesRpcParam implements Serializable {
 
     /**
      * 当前leader的任期值
@@ -13,7 +15,7 @@ public class AppendEntriesRpcParam {
     /**
      * leader的id
      * */
-    private int leaderId;
+    private String leaderId;
 
     public int getTerm() {
         return term;
@@ -23,11 +25,11 @@ public class AppendEntriesRpcParam {
         this.term = term;
     }
 
-    public int getLeaderId() {
+    public String getLeaderId() {
         return leaderId;
     }
 
-    public void setLeaderId(int leaderId) {
+    public void setLeaderId(String leaderId) {
         this.leaderId = leaderId;
     }
 
