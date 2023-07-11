@@ -107,7 +107,7 @@ public class HeartBeatTimeoutCheckTask implements Runnable{
             // 是否获得大多数的投票
             boolean majorVoted = getRpcVoted >= this.currentServer.getRaftConfig().getMajorityNum();
             if(majorVoted){
-                logger.info("HeartBeatTimeoutCheck election result: become a leader! {}",currentServer.getServerId());
+                logger.info("HeartBeatTimeoutCheck election result: become a leader! {}, currentTerm={}",currentServer.getServerId(),currentServer.getCurrentTerm());
 
                 // 票数过半成功当选为leader
                 currentServer.setServerStatusEnum(ServerStatusEnum.LEADER);
