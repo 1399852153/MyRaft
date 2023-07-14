@@ -3,6 +3,8 @@ package myraft.module;
 import myraft.RaftServer;
 import myraft.api.model.RequestVoteRpcParam;
 import myraft.api.model.RequestVoteRpcResult;
+import myraft.common.enums.ServerStatusEnum;
+import myraft.common.model.RaftServerMetaData;
 import myraft.task.task.HeartBeatTimeoutCheckTask;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -70,7 +72,18 @@ public class RaftLeaderElectionModule {
             return new RequestVoteRpcResult(this.currentServer.getCurrentTerm(),false);
         }
 
-        if(this.currentServer.getVotedFor() != null && this.currentServer.getVotedFor() != requestVoteRpcParam.getCandidateId()){
+        // 发起投票的节点任期高于当前节点，无条件投票给它(任期高的说了算)
+        if(this.currentServer.getCurrentTerm() < requestVoteRpcParam.getTerm()){
+            // 刷新元数据
+            this.currentServer.refreshRaftServerMetaData(
+                new RaftServerMetaData(requestVoteRpcParam.getTerm(),requestVoteRpcParam.getCandidateId()));
+            // 任期没它高，自己转为follower
+            this.currentServer.setServerStatusEnum(ServerStatusEnum.FOLLOWER);
+            return new RequestVoteRpcResult(this.currentServer.getCurrentTerm(),true);
+        }
+
+        // term任期值相同，需要避免同一任期内投票给不同的节点而脑裂
+        if(this.currentServer.getVotedFor() != null && !this.currentServer.getVotedFor().equals(requestVoteRpcParam.getCandidateId())){
             // If votedFor is null or candidateId（取反的卫语句）
             // 当前服务器已经把票投给了别人,拒绝投票给发起投票的candidate
             logger.info("reject requestVoteProcess! votedFor={},currentServerId={}",
@@ -78,8 +91,10 @@ public class RaftLeaderElectionModule {
             return new RequestVoteRpcResult(this.currentServer.getCurrentTerm(),false);
         }
 
-        // 设置投票给了谁
-        this.currentServer.setVotedFor(requestVoteRpcParam.getCandidateId());
+        // 投票校验通过,刷新元数据
+        this.currentServer.refreshRaftServerMetaData(
+            new RaftServerMetaData(requestVoteRpcParam.getTerm(),requestVoteRpcParam.getCandidateId()));
+        this.currentServer.processCommunicationHigherTerm(requestVoteRpcParam.getTerm());
         return new RequestVoteRpcResult(this.currentServer.getCurrentTerm(),true);
     }
 
@@ -107,4 +122,5 @@ public class RaftLeaderElectionModule {
         // 生成[min,max]范围内随机整数的通用公式为：n=rand.nextInt(max-min+1)+min。
         return ThreadLocalRandom.current().nextLong(max-min+1) + min;
     }
+
 }

@@ -37,7 +37,7 @@ Unfortunately, Paxos is quite difficult to understand, in spite of numerous atte
 Furthermore, its architecture requires complex changes to support practical systems. 
 As a result, both system builders and students struggle with Paxos.
 #####
-不幸的是，Paxos相当的难理解，尽管很多人试图让其变得更易理解。
+不幸的是，Paxos相当难理解，尽管很多人试图让其变得更易理解。
 此外，为了支持实际的系统其架构需要进行复杂的改变。
 因此，所有的系统构建者和学生都在于Paxos进行斗争。
 
@@ -52,7 +52,7 @@ It was important not just for the algorithm to work, but for it to be obvious wh
 在与Paxos斗争后，我们开始着手去寻找一种新的一致性算法，其能够为构建系统和教育提供更好的支持。
 我们的方法是不同寻常的，因为我们的主要目标是(增进)可理解性：我们可以为实际的系统定义一个一致性算法并以比Paxos更容易学习的方式去描述它吗？
 此外，我们希望该算法能够促进直觉的发展，这对系统构建者来说是必要的。
-重要的不仅仅是算法是如何工作的，理解算法为什么能工作也是很重要的。
+重要的不仅仅是算法是如何工作的，理解算法为什么能工作也很重要。
 
 #####
 The result of this work is a consensus algorithm called Raft.

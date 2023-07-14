@@ -7,6 +7,7 @@ import myraft.api.model.RequestVoteRpcResult;
 import myraft.api.service.RaftService;
 import myraft.common.config.RaftConfig;
 import myraft.common.enums.ServerStatusEnum;
+import myraft.common.model.RaftServerMetaData;
 import myraft.module.RaftHeartBeatBroadcastModule;
 import myraft.module.RaftLeaderElectionModule;
 import myraft.module.RaftServerMetaDataPersistentModule;
@@ -180,12 +181,8 @@ public class RaftServer implements RaftService {
         return raftHeartBeatBroadcastModule;
     }
 
-    public Map<RaftService, Long> getNextIndexMap() {
-        return nextIndexMap;
-    }
-
-    public Map<RaftService, Long> getMatchIndexMap() {
-        return matchIndexMap;
+    public void refreshRaftServerMetaData(RaftServerMetaData raftServerMetaData){
+        this.raftServerMetaDataPersistentModule.refreshRaftServerMetaData(raftServerMetaData);
     }
 
     // ============================= public的业务接口 =================================

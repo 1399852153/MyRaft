@@ -81,6 +81,19 @@ public class RaftServerMetaDataPersistentModule {
         }
     }
 
+    public void refreshRaftServerMetaData(RaftServerMetaData raftServerMetaData){
+        writeLock.lock();
+        try {
+            this.currentTerm = raftServerMetaData.getCurrentTerm();
+            this.votedFor = raftServerMetaData.getVotedFor();
+
+            // 更新后数据落盘
+            persistentRaftServerMetaData(new RaftServerMetaData(this.currentTerm,this.votedFor),persistenceFile);
+        }finally {
+            writeLock.unlock();
+        }
+    }
+
     private static RaftServerMetaData readRaftServerMetaData(File persistenceFile){
         String content = MyRaftFileUtil.getFileContent(persistenceFile);
         if(StringUtils.hasText(content)){
