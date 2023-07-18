@@ -16,7 +16,7 @@ public class RaftConfig {
     private final String serverId;
 
     /**
-     * 自己的配置
+     * 自己节点的配置
      * */
     private final RaftNodeConfig currentNodeConfig;
 
@@ -45,7 +45,7 @@ public class RaftConfig {
     /**
      * 心跳间隔时间 单位：秒
      * */
-    private int heartbeatInternal;
+    private int HeartbeatInternal;
 
     /**
      * leader自动故障计数(用于触发自动选举的调试，和正常逻辑无关)
@@ -98,11 +98,11 @@ public class RaftConfig {
     }
 
     public int getHeartbeatInternal() {
-        return heartbeatInternal;
+        return HeartbeatInternal;
     }
 
-    public void setHeartbeatInternal(int heartbeatInternal) {
-        this.heartbeatInternal = heartbeatInternal;
+    public void setHeartbeatInternal(int HeartbeatInternal) {
+        this.HeartbeatInternal = HeartbeatInternal;
     }
 
     public Range<Integer> getElectionTimeoutRandomRange() {

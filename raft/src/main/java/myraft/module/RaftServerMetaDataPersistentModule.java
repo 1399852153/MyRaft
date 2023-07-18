@@ -6,6 +6,7 @@ import myrpc.common.util.JsonUtil;
 import myrpc.util.StringUtils;
 
 import java.io.File;
+import java.util.Objects;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 public class RaftServerMetaDataPersistentModule {
@@ -72,6 +73,11 @@ public class RaftServerMetaDataPersistentModule {
     public void setVotedFor(String votedFor) {
         writeLock.lock();
         try {
+            if(Objects.equals(this.votedFor,votedFor)){
+                // 相等的话就不刷新了
+                return;
+            }
+
             this.votedFor = votedFor;
 
             // 更新后数据落盘

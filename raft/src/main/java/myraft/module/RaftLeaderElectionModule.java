@@ -5,7 +5,7 @@ import myraft.api.model.RequestVoteRpcParam;
 import myraft.api.model.RequestVoteRpcResult;
 import myraft.common.enums.ServerStatusEnum;
 import myraft.common.model.RaftServerMetaData;
-import myraft.task.task.HeartBeatTimeoutCheckTask;
+import myraft.task.task.HeartbeatTimeoutCheckTask;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -35,16 +35,16 @@ public class RaftLeaderElectionModule {
         this.lastHeartbeatTime = new Date();
         this.scheduledExecutorService = Executors.newScheduledThreadPool(3);
         this.rpcThreadPool = Executors.newFixedThreadPool(
-                Math.max(currentServer.getOtherNodeInCluster().size() * 2,1));
+                Math.max(currentServer.getOtherNodeInCluster().size() * 2, 1));
 
-        registerHeartBeatTimeoutCheckTaskWithRandomTimeout();
+        registerHeartbeatTimeoutCheckTaskWithRandomTimeout();
     }
 
     /**
      * 提交新的延迟任务(带有随机化的超时时间)
      * */
-    public void registerHeartBeatTimeoutCheckTaskWithRandomTimeout(){
-//        logger.info("registerHeartBeatTimeoutCheckTaskWithRandomTimeout!");
+    public void registerHeartbeatTimeoutCheckTaskWithRandomTimeout(){
+//        logger.info("registerHeartbeatTimeoutCheckTaskWithRandomTimeout!");
 
         int electionTimeout = currentServer.getRaftConfig().getElectionTimeout();
         if(currentServer.getCurrentTerm() > 0 && currentServer.getRaftConfig().getDebugElectionTimeout() != null){
@@ -55,9 +55,9 @@ public class RaftLeaderElectionModule {
         long randomElectionTimeout = getRandomElectionTimeout();
         // 选举超时时间的基础上，加上一个随机化的时间
         long delayTime = randomElectionTimeout + electionTimeout * 1000L;
-        logger.debug("registerHeartBeatTimeoutCheckTaskWithRandomTimeout delayTime={}",delayTime);
+        logger.debug("registerHeartbeatTimeoutCheckTaskWithRandomTimeout delayTime={}",delayTime);
         scheduledExecutorService.schedule(
-            new HeartBeatTimeoutCheckTask(currentServer,this),delayTime,TimeUnit.MILLISECONDS);
+            new HeartbeatTimeoutCheckTask(currentServer,this),delayTime,TimeUnit.MILLISECONDS);
     }
 
     /**

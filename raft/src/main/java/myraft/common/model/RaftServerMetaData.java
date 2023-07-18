@@ -13,6 +13,10 @@ public class RaftServerMetaData {
      * */
     private String votedFor;
 
+    public RaftServerMetaData() {
+        // for jackson
+    }
+
     public RaftServerMetaData(int currentTerm, String votedFor) {
         this.currentTerm = currentTerm;
         this.votedFor = votedFor;

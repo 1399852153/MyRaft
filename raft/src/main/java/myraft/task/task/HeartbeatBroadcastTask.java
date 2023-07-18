@@ -5,7 +5,7 @@ import myraft.api.model.AppendEntriesRpcParam;
 import myraft.api.model.AppendEntriesRpcResult;
 import myraft.api.service.RaftService;
 import myraft.common.enums.ServerStatusEnum;
-import myraft.module.RaftHeartBeatBroadcastModule;
+import myraft.module.RaftHeartbeatBroadcastModule;
 import myraft.util.util.CommonUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -18,18 +18,18 @@ import java.util.concurrent.TimeUnit;
 /**
  * leader心跳广播任务
  * */
-public class HeartBeatBroadcastTask implements Runnable{
+public class HeartbeatBroadcastTask implements Runnable{
 
-    private static final Logger logger = LoggerFactory.getLogger(HeartBeatBroadcastTask.class);
+    private static final Logger logger = LoggerFactory.getLogger(HeartbeatBroadcastTask.class);
 
     private final RaftServer currentServer;
-    private final RaftHeartBeatBroadcastModule raftHeartBeatBroadcastModule;
+    private final RaftHeartbeatBroadcastModule raftHeartbeatBroadcastModule;
 
-    private int heartbeatCount = 0;
+    private int HeartbeatCount = 0;
 
-    public HeartBeatBroadcastTask(RaftServer currentServer, RaftHeartBeatBroadcastModule raftHeartBeatBroadcastModule) {
+    public HeartbeatBroadcastTask(RaftServer currentServer, RaftHeartbeatBroadcastModule raftHeartbeatBroadcastModule) {
         this.currentServer = currentServer;
-        this.raftHeartBeatBroadcastModule = raftHeartBeatBroadcastModule;
+        this.raftHeartbeatBroadcastModule = raftHeartbeatBroadcastModule;
     }
 
     @Override
@@ -40,19 +40,19 @@ public class HeartBeatBroadcastTask implements Runnable{
         }
 
         // 心跳广播
-        doHeartBeatBroadcast(currentServer);
+        doHeartbeatBroadcast(currentServer);
 
         processAutoFail();
 
-        logger.debug("do HeartBeatBroadcast end {}",currentServer.getServerId());
+        logger.debug("do HeartbeatBroadcast end {}",currentServer.getServerId());
     }
 
     /**
      * 做心跳广播
      * @return 是否大多数节点依然认为自己是leader
      * */
-    public static boolean doHeartBeatBroadcast(RaftServer currentServer){
-        logger.info("do HeartBeatBroadcast start {}",currentServer.getServerId());
+    public static boolean doHeartbeatBroadcast(RaftServer currentServer){
+        logger.info("do HeartbeatBroadcast start {}",currentServer.getServerId());
 
         // 先刷新自己的心跳时间
         currentServer.getRaftLeaderElectionModule().refreshLastHeartbeatTime();
@@ -67,7 +67,7 @@ public class HeartBeatBroadcastTask implements Runnable{
         appendEntriesRpcParam.setLeaderId(currentServer.getServerId());
 
         for(RaftService node : otherNodeInCluster){
-            Future<AppendEntriesRpcResult> future = currentServer.getRaftHeartBeatBroadcastModule().getRpcThreadPool().submit(
+            Future<AppendEntriesRpcResult> future = currentServer.getRaftHeartbeatBroadcastModule().getRpcThreadPool().submit(
                 ()-> {
                     AppendEntriesRpcResult rpcResult = node.appendEntries(appendEntriesRpcParam);
                     // rpc交互时任期高于当前节点任期的处理
@@ -79,8 +79,8 @@ public class HeartBeatBroadcastTask implements Runnable{
             futureList.add(future);
         }
 
-        List<AppendEntriesRpcResult> appendEntriesRpcResultList = CommonUtil.concurrentGetRpcFutureResult("doHeartBeatBroadcast",futureList,
-            currentServer.getRaftHeartBeatBroadcastModule().getRpcThreadPool(),1, TimeUnit.SECONDS);
+        List<AppendEntriesRpcResult> appendEntriesRpcResultList = CommonUtil.concurrentGetRpcFutureResult("doHeartbeatBroadcast",futureList,
+            currentServer.getRaftHeartbeatBroadcastModule().getRpcThreadPool(),1, TimeUnit.SECONDS);
 
         // 通知成功的数量(+1包括自己)
         int successResponseCount = (int) (appendEntriesRpcResultList.stream().filter(AppendEntriesRpcResult::isSuccess).count() + 1);
@@ -104,8 +104,8 @@ public class HeartBeatBroadcastTask implements Runnable{
             return;
         }
 
-        this.heartbeatCount++;
-        if(this.heartbeatCount % leaderAutoFailCount == 0){
+        this.HeartbeatCount++;
+        if(this.HeartbeatCount % leaderAutoFailCount == 0){
             logger.info("模拟leader自动故障，转为follower状态从而终止心跳广播，触发新的一轮选举 serverId={}",currentServer.getServerId());
             currentServer.setServerStatusEnum(ServerStatusEnum.FOLLOWER);
             currentServer.setCurrentLeader(null);

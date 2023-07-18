@@ -8,15 +8,13 @@ import myraft.api.service.RaftService;
 import myraft.common.config.RaftConfig;
 import myraft.common.enums.ServerStatusEnum;
 import myraft.common.model.RaftServerMetaData;
-import myraft.module.RaftHeartBeatBroadcastModule;
+import myraft.module.RaftHeartbeatBroadcastModule;
 import myraft.module.RaftLeaderElectionModule;
 import myraft.module.RaftServerMetaDataPersistentModule;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 
 public class RaftServer implements RaftService {
 
@@ -53,17 +51,7 @@ public class RaftServer implements RaftService {
     protected List<RaftService> otherNodeInCluster;
 
     private RaftLeaderElectionModule raftLeaderElectionModule;
-    private RaftHeartBeatBroadcastModule raftHeartBeatBroadcastModule;
-
-    /**
-     * nextIndex[]
-     * */
-    private final Map<RaftService,Long> nextIndexMap = new HashMap<>();
-
-    /**
-     * matchIndex[]
-     * */
-    private final Map<RaftService,Long> matchIndexMap = new HashMap<>();
+    private RaftHeartbeatBroadcastModule raftHeartbeatBroadcastModule;
 
     public RaftServer(RaftConfig raftConfig) {
         this.serverId = raftConfig.getServerId();
@@ -80,7 +68,7 @@ public class RaftServer implements RaftService {
         this.otherNodeInCluster = otherNodeInCluster;
 
         raftLeaderElectionModule = new RaftLeaderElectionModule(this);
-        raftHeartBeatBroadcastModule = new RaftHeartBeatBroadcastModule(this);
+        raftHeartbeatBroadcastModule = new RaftHeartbeatBroadcastModule(this);
 
         logger.info("raft server init end! otherNodeInCluster={}, currentServerId={}",otherNodeInCluster,serverId);
     }
@@ -177,8 +165,8 @@ public class RaftServer implements RaftService {
         return raftLeaderElectionModule;
     }
 
-    public RaftHeartBeatBroadcastModule getRaftHeartBeatBroadcastModule() {
-        return raftHeartBeatBroadcastModule;
+    public RaftHeartbeatBroadcastModule getRaftHeartbeatBroadcastModule() {
+        return raftHeartbeatBroadcastModule;
     }
 
     public void refreshRaftServerMetaData(RaftServerMetaData raftServerMetaData){
