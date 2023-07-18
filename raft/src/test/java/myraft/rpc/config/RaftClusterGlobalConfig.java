@@ -42,12 +42,12 @@ public class RaftClusterGlobalConfig {
 
     /**
      * N次心跳后，leader会自动模拟出现故障(退回follow，停止心跳广播)
-     * N<=0代表不出自动模拟故障
+     * N<=0代表不触发自动模拟故障
      */
     public static final int leaderAutoFailCount = 0;
 
     /**
-     * 随机化的选举超时时间
+     * 随机化的选举超时时间(毫秒)
      * */
     public static final Range<Integer> electionTimeoutRandomRange = new Range<>(150,500);
 
@@ -69,10 +69,10 @@ public class RaftClusterGlobalConfig {
         // 随机化选举超时时间的范围
         raftConfig.setElectionTimeoutRandomRange(RaftClusterGlobalConfig.electionTimeoutRandomRange);
 
-        RaftRpcServer raftRpcServer = new RaftRpcServer(
-            raftConfig, RaftClusterGlobalConfig.registry);
-
+        RaftRpcServer raftRpcServer = new RaftRpcServer(raftConfig, RaftClusterGlobalConfig.registry);
         List<RaftService> raftServiceList = raftRpcServer.getRpcProxyList(otherNodeList);
+
+        // raft服务，启动！
         raftRpcServer.init(raftServiceList);
     }
 }
