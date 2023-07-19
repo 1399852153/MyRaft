@@ -24,13 +24,13 @@
 通过raft的论文或者其它相关资料，读者基本能大致理解raft的工作原理。  
 但纸上得来终觉浅，绝知此事要躬行，亲手实践才能更好的把握raft中的精巧细节，加深对raft算法的理解，更有效的阅读基于raft或其它一致性协议的开源项目源码。
 ##### MyRaft
-在这个系列博客中会带领读者一步步实现一个基于raft算法的简易KV数据库,即MyRaft。  
-MyRaft实现了raft论文中提到的三个功能，即leader选举、日志复制和日志压缩（在实践中发现“集群成员动态变更”对原有逻辑进行较大改动而大幅增加复杂度，限于个人水平暂不实现）。  
-三个功能会通过三次lib的迭代逐步完成，其中每个迭代都会以博客的形式分享出来。  
+在这个系列博客中会带领读者一步步实现一个基于raft算法的简易KV数据库,即MyRaft。MyRaft的实现基于原始的raft算法，没有额外的优化，目的是为了保证实现的简单性。   
+MyRaft实现了raft论文中提到的三个功能，即”leader选举“、”日志复制“和”日志压缩“（在实践中发现“集群成员动态变更”对原有逻辑有较大改动而大幅增加了复杂度，限于个人水平暂不实现）。  
+三个功能会通过三次迭代实验逐步完成，其中每个迭代都会以博客的形式分享出来。  
 
 ## 3. MyRaft基础结构源码分析
-* 由于是MyRaft的第一个迭代，在这个迭代中需要先搭好MyRaft的基础架子。  
-  raft中的每个节点本质上既是一个rpc服务器同时也是一个rpc的消费者，即通过rpc的方式与其它节点进行通信。  
+* 由于是MyRaft的第一个迭代，在这个迭代中需要先搭好MyRaft的基础骨架。  
+  raft中的每个节点本质上是一个rpc服务器，同时也是一个rpc的消费者，节点之间通过rpc的方式互相通信。  
 * MyRaft使用的rpc框架是上一个实验中自己实现的MyRpc框架：  
   博客地址: https://www.cnblogs.com/xiaoxiongcanguan/p/17506728.html  
   github地址：https://github.com/1399852153/MyRpc (main分支)  
@@ -359,7 +359,7 @@ raft的leader选举在论文中有较详细的描述，这里说一下我认为�
 * Raft算法中leader扮演着绝对核心的角色，leader负责处理客户端的请求、将操作日志同步给其它的follower节点以及通知follower提交日志等等。  
   因此Raft集群必须基于多数原则选举出一个存活的leader才能对外提供服务，并且一个任期内只能有一个基于多数票选出的leader。
 * raft是非拜占庭容错共识算法，rpc通信时交互的双方的请求和响应都是可信的，不会作假，节点运行的行为也符合raft算法的规定。
-* raft中存在任期term的概念，任期值只会单向递增，可以理解为一个虚拟的时间。过去的leader(term值更小的)需要服从、追随现任的leader(term值更大的)。
+* raft中存在任期term的概念，任期值只会单向递增，可以理解为一个虚拟的时间，是raft实现线性一致性关键的一环。过去的leader(term值更小的)需要服从、追随现任的leader(term值更大的)。
 * 在raft节点刚启动时处于follower追随者状态。如果一段时间内raft节点没有接受到来自leader的定时心跳rpc(logEntry为空的appendEntries)通知时就会发起一轮新的选举。
   产生这个现象的原因有很多，比如集群刚刚启动还没有leader；或者之前的leader因为某种原因宕机或与follower的网络通信出现故障等。
 * 发起请求的follower会转变为candidate候选人状态，并首先投票给自己。同时并行的向集群中的其它节点发起请求投票的rpc请求(requestVote),可以理解为给自己拉票。  
@@ -939,7 +939,7 @@ public class RaftServer implements RaftService {
 }
 ```
 ## 4. MyRaft leader选举demo验证
-在工程的test目录下，可以启动一个5节点的MyRaft的服务集群(目前依赖zookeeper，用main方法启动即可)，可以通过RaftClusterGlobalConfig类进行相关的配置。
+在工程的test目录下，可以启动一个5节点的MyRaft的服务集群(用main方法启动即可)，通过修改其中的RaftClusterGlobalConfig类可以修改相关的配置。
 ![img.png](img.png)
 #####
 ```java
@@ -949,7 +949,7 @@ public class RaftClusterGlobalConfig {
      * 简单起见注册中心统一配置
      * */
     public static Registry registry = RegistryFactory.getRegistry(
-        new RegistryConfig(RegistryCenterTypeEnum.ZOOKEEPER_CURATOR.getCode(), "127.0.0.1:2181"));
+        new RegistryConfig(RegistryCenterTypeEnum.FAKE_REGISTRY.getCode(), "127.0.0.1:2181"));
 
     /**
      * raft的集群配置
@@ -1011,5 +1011,23 @@ public class RaftClusterGlobalConfig {
 2. 将leader杀掉(5节点集群最多能容忍2个节点故障)，看是否在选举超时后触发新一轮选举，并且成功选出新的leader。
 3. 将之前杀掉的leader再启动，看能否成功的回到集群中。
 ## 5. leader预选举优化(PreVote)
-
+在原始的raft算法的leader选举中存在一个问题。具体场景举例如下：  
+* 一个5节点的raft集群，突然其中2个follower节点与另外三个节点(包含当前leader)之间出现了网络分区，不同网络分区的节点无法正常通信。
+* 此时3节点所在的网络分区是多数分区，因此可以正常工作。而2个节点所在的分区是少数分区，由于无法接到leader心跳而触发新的选举。   
+  raft的论文中提到，发起新选举需要先将自己的任期值term自增1，然后发起并行的requestVote。  
+  但此时2节点所在的少数分区是无法成功获得大多数选票的，因此在这个分区中的节点会不断的发起一轮又一轮的leader选举，term值也会在很短的时间内快速增长。  
+* 在一段时间后网络分区问题恢复后，集群中的所有节点又能互相通信了，此时少数分区节点的term值大概率远大于正常工作的多数分区中的节点。  
+  在少数分区节点收到来自多数分区节点的leader的rpc请求时，其会响应一个更大的term值。此时位于多数分区中的leader会因为响应的term值高于自己而主动退位，集群内会发起一轮新的选举。
+#####
+**从本质上来说，这个分区恢复后进行的新选举是无意义的。且由于进行选举会造成集群短暂的不可用，因此最好能避免这个问题。**
+#####
+业界给出的解决方法是在真正的选举前先发起一轮预选举(preVote)。  
+* 预选举的操作和选举一样，也是并行的发起requestVote请求，主要的区别在于发起预选举的节点并不事先将term值自增，而是维持不变。节点的状态也在candidate的基础上新增了一个preCandidate状态。    
+* 发起预选举的节点需要根据预选举中发起的并行requestVote结果来决定是否开启实际的leader选举。  
+  如果预选举中发起的并行requestVote得到了多数票，则可以接着发起实际的选举。而如果没有得到多数票，则不进行实际的选举。
+* 引入了预选举的机制后，上面所说的网络分区发生时，少数分区的节点由于无法在预选举中获得大多数票，因此只会不断的发起一轮又一轮的预选举。  
+  因此，其term值不会不断增加而是一直维持在分区发生时的值。在分区问题恢复后，其term值一定是小于或等于多数分区内leader的term值，而不会进行一轮无效的选举，从而解决上述的问题。  
+  但需要注意的是，引入预选举机制也会增加正常状况下发起正常选举的开销。
+#####
+MyRaft为了保持实现的简单性，并没有实现预选举机制。但流行的raft系统，比如etcd、sofa-jraft等等都是实现了预选举机制的，所以在博客中还是简单介绍一下。
 ## 6. 总结

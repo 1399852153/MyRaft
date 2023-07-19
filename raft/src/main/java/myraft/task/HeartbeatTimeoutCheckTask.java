@@ -1,4 +1,4 @@
-package myraft.task.task;
+package myraft.task;
 
 import myraft.RaftServer;
 import myraft.api.model.RequestVoteRpcParam;
@@ -59,7 +59,7 @@ public class HeartbeatTimeoutCheckTask implements Runnable{
         Date lastHeartbeatTime = raftLeaderElectionModule.getLastHeartbeatTime();
         long diffTime = currentDate.getTime() - lastHeartbeatTime.getTime();
 
-        logger.debug("currentDate={}, lastHeartbeatTime={}, diffTime={}, serverId={}",
+        logger.info("currentDate={}, lastHeartbeatTime={}, diffTime={}, serverId={}",
             currentDate,lastHeartbeatTime,diffTime,currentServer.getServerId());
         // 心跳超时判断
         if(diffTime > (electionTimeout * 1000L)){

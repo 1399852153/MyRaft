@@ -21,7 +21,7 @@ public class RaftClusterGlobalConfig {
      * 简单起见注册中心统一配置
      * */
     public static Registry registry = RegistryFactory.getRegistry(
-        new RegistryConfig(RegistryCenterTypeEnum.ZOOKEEPER_CURATOR.getCode(), "127.0.0.1:2181"));
+        new RegistryConfig(RegistryCenterTypeEnum.FAKE_REGISTRY.getCode(), "127.0.0.1:2181"));
 
     /**
      * raft的集群配置

@@ -5,7 +5,7 @@ import myraft.api.model.RequestVoteRpcParam;
 import myraft.api.model.RequestVoteRpcResult;
 import myraft.common.enums.ServerStatusEnum;
 import myraft.common.model.RaftServerMetaData;
-import myraft.task.task.HeartbeatTimeoutCheckTask;
+import myraft.task.HeartbeatTimeoutCheckTask;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -32,11 +32,11 @@ public class RaftLeaderElectionModule {
 
     public RaftLeaderElectionModule(RaftServer currentServer) {
         this.currentServer = currentServer;
-        this.lastHeartbeatTime = new Date();
         this.scheduledExecutorService = Executors.newScheduledThreadPool(3);
         this.rpcThreadPool = Executors.newFixedThreadPool(
                 Math.max(currentServer.getOtherNodeInCluster().size() * 2, 1));
 
+        this.lastHeartbeatTime = new Date();
         registerHeartbeatTimeoutCheckTaskWithRandomTimeout();
     }
 

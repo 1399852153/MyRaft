@@ -1,7 +1,7 @@
 package myraft.module;
 
 import myraft.RaftServer;
-import myraft.task.task.HeartbeatBroadcastTask;
+import myraft.task.HeartbeatBroadcastTask;
 
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;

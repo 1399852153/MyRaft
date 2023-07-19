@@ -1,4 +1,4 @@
-package myraft.task.task;
+package myraft.task;
 
 import myraft.RaftServer;
 import myraft.api.model.AppendEntriesRpcParam;
