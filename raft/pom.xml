@@ -14,6 +14,7 @@
     </properties>
 
     <dependencies>
+        <!-- https://github.com/1399852153/MyRpc (main分支中)   -->
         <dependency>
             <groupId>myrpc</groupId>
             <artifactId>myrpc-core</artifactId>

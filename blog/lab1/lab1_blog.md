@@ -1,32 +1,35 @@
-## 自己动手实现基于Raft的简易KV数据库(一) 实现leader选举
+## 手写raft(一) 实现leader选举
 ## 1. 一致性算法介绍
 ### 1.1 一致性同步与Paxos算法
-* 对可靠性有很高要求的系统，通常都会额外部署1至多个机器为备用副本组成主备集群，避免出现单点故障。
+* 对可靠性有很高要求的系统，通常都会额外部署1至多个机器为备用副本组成主备集群，避免出现单点故障。  
   有状态的系统需要主节点与备用副本间以某种方式进行数据复制，这样主节点出现故障时就能快速的令备用机器接管系统以达到高可用的目的。
-* 常见的主备复制方式是异步、弱一致性的，例如DNS系统，mysql、redis(7.0之前)等数据库的主备复制，或者通过某种消息中间件来进行解耦，即在CAP中选择了AP。  
-  弱一致性的AP相比强一致CP的复制有着许多优点：**效率高**(多个单次操作可以批量处理)，**耦合性低**(备份节点挂了也不影响主节点工作)，实现相对简单。  
-  但AP复制最大的缺点就是**丧失了强一致性**，主节点在操作完成响应客户端后，但还未成功同步到备份节点前宕机，对应变更将会丢失，因此AP的方案不适用于对一致性有苛刻要求的场合。
-* 原始的强一致性主备同步，即主节点在每一个备份节点同步完成后才能响应客户端成功的方案效率太低，可用性太差(任意一个备份节点故障就会使得集群不可用)。  
-  因此基于多数派的分布式强一致算法被发明了出来，其中最有名的便是**Paxos**算法。但Paxos算法过于复杂，在分布式环境下有大量的case需要得到正确的实现，因此时至今日也没有多少系统真正的将Paxos落地。  
+* 常见的主备复制方式是异步、弱一致性的，例如DNS系统，mysql、redis(7.0之前)等数据库的主备复制，或者通过某种消息中间件来进行解耦，即在CAP中选择了AP(高可用、分区容错)而舍弃了C(强一致性)。  
+  弱一致性的AP相比强一致CP的复制有着许多优点：**效率高**(多个单次操作可以批量处理)，**耦合性低**(备份节点挂了也不影响主节点工作)，实现相对简单等等。  
+  但AP复制最大的缺点就是**丧失了强一致性**，主节点在操作完成响应客户端后，但还未成功同步到备份节点前宕机，对应的变更存在着丢失的风险，因此AP的方案不适用于对一致性有苛刻要求的场合。
+* 最原始的强一致性主备同步，即主节点在每一个备份节点同步完成后才能响应客户端成功的方案效率太低，可用性太差(任意一个备份节点故障就会使得集群不可用)。  
+  因此基于多数派的分布式强一致算法被发明了出来，其中最早被提出的便是**Paxos**算法。但Paxos算法过于复杂，在分布式环境下有大量的case需要得到正确的实现，因此时至今日也没有多少系统真正的将Paxos落地。  
 ### 1.2 raft算法
 * 由于Paxos过于复杂的原因，Raft算法被发明了出来。Raft算法在设计时大量参考了Paxos，也是一个基于日志和多数派的一致性算法，但在很多细节上相比Paxos做了许多简化。 
 * 因为Raft比Paxos要简单很多，更容易被开发人员理解并最终用于构建实际的系统。因此即使raft算法的性能相比Paxos要差一点，但目前流行的强一致分布式系统基本都是基于Raft算法的。  
 #####
-[raft的论文](https://www.cnblogs.com/xiaoxiongcanguan/p/17552027.html) 中将raft算法的功能分解为4个模块：
+[raft的论文](https://raft.github.io/raft.pdf) 中将raft算法的功能分解为4个模块：
 1. leader选举
 2. 日志复制
 3. 日志压缩
 4. 集群成员动态变更
 #####
-其中前两项“leader选举”和“日志复制”是raft算法的基础，而后两项“日志压缩”和“集群成员动态变更”属于raft算法在功能上重要的优化。
-
+其中前两项“leader选举”和“日志复制”是raft算法的基础，而后两项“日志压缩”和“集群成员动态变更”属于raft算法在功能上的重要优化。
+#####
+[raft论文中英翻译](https://www.cnblogs.com/xiaoxiongcanguan/p/17552027.html)
 ## 2. 自己动手实现一个基于Raft的简易KV数据库
 通过raft的论文或者其它相关资料，读者基本能大致理解raft的工作原理。  
 但纸上得来终觉浅，绝知此事要躬行，亲手实践才能更好的把握raft中的精巧细节，加深对raft算法的理解，更有效的阅读基于raft或其它一致性协议的开源项目源码。
-##### MyRaft
+### MyRaft介绍
 在这个系列博客中会带领读者一步步实现一个基于raft算法的简易KV数据库,即MyRaft。MyRaft的实现基于原始的raft算法，没有额外的优化，目的是为了保证实现的简单性。   
 MyRaft实现了raft论文中提到的三个功能，即”leader选举“、”日志复制“和”日志压缩“（在实践中发现“集群成员动态变更”对原有逻辑有较大改动而大幅增加了复杂度，限于个人水平暂不实现）。  
 三个功能会通过三次迭代实验逐步完成，其中每个迭代都会以博客的形式分享出来。  
+##### MyRaft架构图
+![img_2.png](img_2.png)
 
 ## 3. MyRaft基础结构源码分析
 * 由于是MyRaft的第一个迭代，在这个迭代中需要先搭好MyRaft的基础骨架。  
@@ -34,8 +37,6 @@ MyRaft实现了raft论文中提到的三个功能，即”leader选举“、”�
 * MyRaft使用的rpc框架是上一个实验中自己实现的MyRpc框架：  
   博客地址: https://www.cnblogs.com/xiaoxiongcanguan/p/17506728.html  
   github地址：https://github.com/1399852153/MyRpc (main分支)  
-#####
-todo 附MyRaft基础架构图
 ##### Raft的rpc接口定义
 * **因为lab1中只实现leader选举，简单起见只定义当前所需的api接口，接口参数相比最终的实现也省去了大量当前用不上的字段，后续有需要再进行拓展。**
 ```java
@@ -360,12 +361,15 @@ raft的leader选举在论文中有较详细的描述，这里说一下我认为�
   因此Raft集群必须基于多数原则选举出一个存活的leader才能对外提供服务，并且一个任期内只能有一个基于多数票选出的leader。
 * raft是非拜占庭容错共识算法，rpc通信时交互的双方的请求和响应都是可信的，不会作假，节点运行的行为也符合raft算法的规定。
 * raft中存在任期term的概念，任期值只会单向递增，可以理解为一个虚拟的时间，是raft实现线性一致性关键的一环。过去的leader(term值更小的)需要服从、追随现任的leader(term值更大的)。
-* 在raft节点刚启动时处于follower追随者状态。如果一段时间内raft节点没有接受到来自leader的定时心跳rpc(logEntry为空的appendEntries)通知时就会发起一轮新的选举。
+* 在raft节点刚启动时处于follower追随者状态。如果一段时间内raft节点没有接受到来自leader的定时心跳rpc(logEntry为空的appendEntries)通知时就会发起一轮新的选举。  
   产生这个现象的原因有很多，比如集群刚刚启动还没有leader；或者之前的leader因为某种原因宕机或与follower的网络通信出现故障等。
 * 发起请求的follower会转变为candidate候选人状态，并首先投票给自己。同时并行的向集群中的其它节点发起请求投票的rpc请求(requestVote),可以理解为给自己拉票。  
   接收到requestVote请求的节点会根据自身的状态等信息决定是否投票给发起投票的节点。  
   当candidate获得了集群中超过半数的投票(即包括自己在内的1票加上requestVote返回投票成功的数量超过半数(比如5节点得到3票，6节点得到4票))，则candidate成为当前任期的leader。  
   如果没有任何一个candidate获得多数选票(没选出leader，可能是分票了，也可能是网络波动等等)，则candidate会将当前任期自增1，则下一次选举超时时会再触发一轮新的选举，循环往复直至选出leader。
+#####
+![img_1.png](img_1.png)
+#####
 * leader当选后需要立即向其它的节点发送心跳rpc(logEntry为空的appendEntries)，昭告新leader的产生以抑制其它节点发起新的选举。  
   心跳rpc必须以一定频率的定时向所有follower发送，发送的时间间隔需要小于设置的选举超时时间。
 * 由于处理requestVote是先到先得的，同一任期内先发起投票请求的candidate会收到票，后发送的会被拒绝。  
@@ -376,12 +380,10 @@ raft的leader选举在论文中有较详细的描述，这里说一下我认为�
 * 注意：raft论文在5.4安全性一节中提到，leader选举对于candidate的日志状态有一定的要求(因为只有拥有完整日志的节点才有资格成为leader，确保leader更替时日志不会丢失)，
   但lab1中不支持日志复制，所以MyRaft在lab1的requestVote实现中省略了相关逻辑。
 
-todo raft节点状态变化图
-
 ### MyRaft leader选举源码分析
 下面基于源码展开介绍MyRaft是如何实现raft领导者选举的。
 #####
-大致可以分为以下几部分：
+大致分为以下几部分：
 1. raft节点配置
 2. raft节点定时选举超时检查
 3. candidate发起选举
@@ -439,7 +441,7 @@ public class RaftNodeConfig {
 }
 ```
 #### 3.2 raft节点定时选举超时检查
-* MyRaft中将leader选举相关的主要逻辑都集中维护在RaftLeaderElectionModule类中。
+* MyRaft中将leader选举相关的主要逻辑都集中维护在RaftLeaderElectionModule类中。  
   lastHeartbeatTime属性用于存储最后一次收到leader心跳的绝对时间，如果当前节点状态不是leader，并且发现lastHeartbeatTime距离当前时间已经超过了指定的选举超时时间则触发选举。
 * 心跳检查的超时逻辑集中在HeartbeatTimeoutCheckTask中。  
   由于需要引入随机化的心跳超时时间，因此无法使用ScheduledExecutorService的scheduleAtFixedRate方法，改为在每个任务执行完成时再添加一个新任务回去的方式来实现。
@@ -670,11 +672,11 @@ public class HeartbeatTimeoutCheckTask implements Runnable{
 }
 ```
 #### 3.3 candidate发起选举
-* 在上一节介绍的HeartbeatTimeoutCheckTask中，如果发现有一段时间没有收到心跳后当前节点便会触发新一轮的选举，主要逻辑在triggerNewElection方法中。
+* 在上一节介绍的HeartbeatTimeoutCheckTask中，如果发现有一段时间没有收到心跳后当前节点便会触发新一轮的选举，主要逻辑在triggerNewElection方法中。  
   triggerNewElection中通过首先令当前term值自增1并投票给自己，然后并行的向集群中的其它节点发送requestVote的rpc请求。
-* 并行处理逻辑通过CommonUtil中的concurrentGetRpcFutureResult方法收集所有的响应结果。
-  通过future.get设置超时时间，超时话则认为是投票失败。
-* 在超时时间内获得所有响应结果后，计算所得到的的票数是否大于半数(>majorityNum)。
+* 并行处理逻辑通过CommonUtil中的concurrentGetRpcFutureResult方法收集所有的响应结果。  
+  通过future.get设置超时时间，超时则认为是投票失败。
+* 在超时时间内获得所有响应结果后，计算所得到的的票数是否大于半数(>majorityNum)。  
   如果超过半数则认为选举成功，自己成为合法的leader。当前节点刷新相关的状态数据，同时立即发起一次心跳广播以抑制其它节点发起新的选举。
 #####  
 ```java
@@ -833,7 +835,7 @@ public class HeartbeatBroadcastTask implements Runnable{
 **处理requestVote请求**  
 * MyRaft处理requestVote的逻辑在上面提到的RaftLeaderElectionModule的requestVoteProcess方法中。  
   raft需要保证每个任期都只能选出一个leader，所以对于特定的term任期需要做到只有一个节点能获得超过半数选票。
-* 因此，requestVoteProcess中会对发起投票的candidate和自己本地的term值进行比对，如果term值比自己低就直接拒绝(过去的leader不是leader，只有现在的leader才是leader)。
+* 因此，requestVoteProcess中会对发起投票的candidate和自己本地的term值进行比对，如果term值比自己低就直接拒绝(过去的leader不是leader，只有现在的leader才是leader)。  
   每个节点只有一票，如果term值相同则需要确保自己在此之前没有投票给其它candidate。
 #####
 **处理心跳请求**  
@@ -944,10 +946,7 @@ public class RaftServer implements RaftService {
 #####
 ```java
 public class RaftClusterGlobalConfig {
-
-    /**
-     * 简单起见注册中心统一配置
-     * */
+    
     public static Registry registry = RegistryFactory.getRegistry(
         new RegistryConfig(RegistryCenterTypeEnum.FAKE_REGISTRY.getCode(), "127.0.0.1:2181"));
 
@@ -1006,7 +1005,7 @@ public class RaftClusterGlobalConfig {
 }
 ```
 #####
-验证lab1中MyRaft leader选举实现的正确性，可以简单的验证以下几个case：
+验证lab1中MyRaft leader选举实现的正确性，可以通过以下几个case简单的验证下：
 1. 启动5个节点，看看是否能够在短时间内选举出一个leader，leader是否能抑制后续的选举(leader定时心跳有日志能观察到)。
 2. 将leader杀掉(5节点集群最多能容忍2个节点故障)，看是否在选举超时后触发新一轮选举，并且成功选出新的leader。
 3. 将之前杀掉的leader再启动，看能否成功的回到集群中。
@@ -1029,5 +1028,10 @@ public class RaftClusterGlobalConfig {
   因此，其term值不会不断增加而是一直维持在分区发生时的值。在分区问题恢复后，其term值一定是小于或等于多数分区内leader的term值，而不会进行一轮无效的选举，从而解决上述的问题。  
   但需要注意的是，引入预选举机制也会增加正常状况下发起正常选举的开销。
 #####
-MyRaft为了保持实现的简单性，并没有实现预选举机制。但流行的raft系统，比如etcd、sofa-jraft等等都是实现了预选举机制的，所以在博客中还是简单介绍一下。
+MyRaft为了保持实现的简单性，并没有实现预选举机制。但etcd、sofa-jraft等流行的开源raft系统都是实现了预选举优化的，所以在这里还是简单介绍一下。
 ## 6. 总结
+* 作为手写raft系列博客的第一篇，在博客的第一、二节简单介绍了raft算法和MyRaft，第3节则详细分析了leader选举的关键细节并基于源码详细分析了MyRaft是如何实现leader选举的。
+* 单纯实现Raft的leader选举并没有什么难度。以我个人的实践经验来说，真正的困难之处在于后续功能的叠加。  
+  由于raft的论文中介绍的几个模块彼此之间是紧密关联的。因此后续日志复制、日志压缩以及成员动态变更这几个功能的逐步实现中，每完成一个都会对上个版本的代码在细节上有不小的调整，大大增加了整体的复杂度。
+* 博客中展示的完整代码在我的github上：https://github.com/1399852153/MyRaft (release/lab1_leader_election分支)，希望能帮助到对raft算法感兴趣的小伙伴。  
+  内容如有错误，还请多多指教。
