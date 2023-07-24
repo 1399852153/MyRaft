@@ -1,11 +1,9 @@
 package myraft.api.model;
 
-import java.io.Serializable;
-
 /**
  * 请求投票的RPC接口参数对象
  */
-public class RequestVoteRpcParam implements Serializable {
+public class RequestVoteRpcParam {
 
     /**
      * 候选人的任期编号

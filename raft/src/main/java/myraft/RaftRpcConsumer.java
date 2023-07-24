@@ -1,11 +1,9 @@
 package myraft;
 
-import myraft.api.model.AppendEntriesRpcParam;
-import myraft.api.model.AppendEntriesRpcResult;
-import myraft.api.model.RequestVoteRpcParam;
-import myraft.api.model.RequestVoteRpcResult;
+import myraft.api.model.*;
 import myraft.api.service.RaftService;
 import myraft.common.config.RaftNodeConfig;
+import myraft.exception.MyRaftException;
 import myrpc.common.model.URLAddress;
 import myrpc.consumer.context.ConsumerRpcContext;
 import myrpc.consumer.context.ConsumerRpcContextHolder;
@@ -23,6 +21,12 @@ public class RaftRpcConsumer implements RaftService {
     public RaftRpcConsumer(RaftNodeConfig targetNodeConfig, RaftService proxyRaftService) {
         this.targetNodeConfig = targetNodeConfig;
         this.raftServiceProxy = proxyRaftService;
+    }
+
+    @Override
+    public ClientRequestResult clientRequest(ClientRequestParam clientRequestParam) {
+        // 只有raft的客户端才会调用这个方法，服务端是不会调用这个方法的
+        throw new MyRaftException("raft server node can not be invoke clientRequest!");
     }
 
     @Override

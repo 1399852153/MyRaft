@@ -1,12 +1,14 @@
 package myraft.api.service;
 
 
-import myraft.api.model.AppendEntriesRpcParam;
-import myraft.api.model.AppendEntriesRpcResult;
-import myraft.api.model.RequestVoteRpcParam;
-import myraft.api.model.RequestVoteRpcResult;
+import myraft.api.model.*;
 
 public interface RaftService {
+
+    /**
+     * 客户端的请求
+     * */
+    ClientRequestResult clientRequest(ClientRequestParam clientRequestParam);
 
     /**
      * 请求投票 requestVote

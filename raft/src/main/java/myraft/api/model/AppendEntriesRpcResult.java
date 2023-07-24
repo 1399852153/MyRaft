@@ -1,11 +1,9 @@
 package myraft.api.model;
 
-import java.io.Serializable;
-
 /**
  * 追加日志条目的RPC接口响应对象
  * */
-public class AppendEntriesRpcResult implements Serializable {
+public class AppendEntriesRpcResult {
 
     /**
      * 被调用者当前的任期值
