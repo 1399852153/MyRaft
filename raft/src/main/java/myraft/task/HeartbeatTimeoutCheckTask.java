@@ -1,6 +1,8 @@
 package myraft.task;
 
 import myraft.RaftServer;
+import myraft.api.command.EmptySetCommand;
+import myraft.api.model.ClientRequestParam;
 import myraft.api.model.RequestVoteRpcParam;
 import myraft.api.model.RequestVoteRpcResult;
 import myraft.api.service.RaftService;
@@ -126,15 +128,36 @@ public class HeartbeatTimeoutCheckTask implements Runnable{
             currentServer.setServerStatusEnum(ServerStatusEnum.LEADER);
             currentServer.setCurrentLeader(currentServer.getServerId());
 
-            // 成为leader后立马发送一次心跳,抑制其它节点发起新的一轮选举
-            // Upon election: send initial empty AppendEntries RPCs (heartbeat) to each server;
-            // repeat during idle periods to prevent election timeouts (§5.2)
-            HeartbeatBroadcastTask.doHeartbeatBroadcast(currentServer);
+            // 成为leader之后需要进行的一些操作
+            processWhenBecomeLeader();
         }else{
             // 票数不过半，无法成为leader
             logger.info("HeartbeatTimeoutCheck election result: not become a leader! {}",currentServer.getServerId());
         }
 
         this.currentServer.cleanVotedFor();
+    }
+
+    /**
+     * 成为leader之后需要进行的一些操作
+     * */
+    private void processWhenBecomeLeader(){
+        // 成为leader后立马发送一次心跳,抑制其它节点发起新的一轮选举
+        // Upon election: send initial empty AppendEntries RPCs (heartbeat) to each server;
+        // repeat during idle periods to prevent election timeouts (§5.2)
+        HeartbeatBroadcastTask.doHeartbeatBroadcast(currentServer);
+
+        long lastIndex = currentServer.getLogModule().getLastIndex();
+        for(RaftService otherService : currentServer.getOtherNodeInCluster()){
+            // for each server, index of the next log entry to send to that server (initialized to leader last log index + 1)
+            this.currentServer.getNextIndexMap().put(otherService, lastIndex+1);
+
+            // for each server, index of highest log entry known to be replicated on server (initialized to 0, increases monotonically)
+            this.currentServer.getMatchIndexMap().put(otherService, 0L);
+        }
+
+        // 成为leader后再发起一次no-op的日志复制操作，获得nextIndexMap和matchIndexMap的最新值
+        // Raft handles this by having each leader commit a blank _no-op_ entry into the log at the start of its term.
+        currentServer.clientRequest(new ClientRequestParam(new EmptySetCommand()));
     }
 }

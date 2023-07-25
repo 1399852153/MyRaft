@@ -52,6 +52,11 @@ public class RaftConfig {
      * */
     private int leaderAutoFailCount;
 
+    /**
+     * appendEntries批量发送日志的条数(必须大于0)
+     * */
+    private int appendLogEntryBatchNum = 1;
+
     public RaftConfig(RaftNodeConfig currentNodeConfig,List<RaftNodeConfig> raftNodeConfigList) {
         this.serverId = currentNodeConfig.getServerId();
         this.currentNodeConfig = currentNodeConfig;
@@ -119,6 +124,14 @@ public class RaftConfig {
 
     public void setLeaderAutoFailCount(int leaderAutoFailCount) {
         this.leaderAutoFailCount = leaderAutoFailCount;
+    }
+
+    public int getAppendLogEntryBatchNum() {
+        return appendLogEntryBatchNum;
+    }
+
+    public void setAppendLogEntryBatchNum(int appendLogEntryBatchNum) {
+        this.appendLogEntryBatchNum = appendLogEntryBatchNum;
     }
 
     private boolean isOddNumber(int num){

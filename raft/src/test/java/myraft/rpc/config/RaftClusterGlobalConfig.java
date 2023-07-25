@@ -47,6 +47,11 @@ public class RaftClusterGlobalConfig {
     public static final int leaderAutoFailCount = 0;
 
     /**
+     * appendEntries时批量发送的日志条数
+     * */
+    public static final int appendLogEntryBatchNum = 2;
+
+    /**
      * 随机化的选举超时时间(毫秒)
      * */
     public static final Range<Integer> electionTimeoutRandomRange = new Range<>(150,500);
@@ -68,6 +73,8 @@ public class RaftClusterGlobalConfig {
         raftConfig.setLeaderAutoFailCount(RaftClusterGlobalConfig.leaderAutoFailCount);
         // 随机化选举超时时间的范围
         raftConfig.setElectionTimeoutRandomRange(RaftClusterGlobalConfig.electionTimeoutRandomRange);
+        // appendEntries时批量发送的日志条数
+        raftConfig.setAppendLogEntryBatchNum(appendLogEntryBatchNum);
 
         RaftRpcServer raftRpcServer = new RaftRpcServer(raftConfig, RaftClusterGlobalConfig.registry);
         List<RaftService> raftServiceList = raftRpcServer.getRpcProxyList(otherNodeList);

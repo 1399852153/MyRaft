@@ -63,10 +63,6 @@ public class LogModule {
 
     private static final String logFileName = "raftLog.txt";
     private static final String logMetaDataFileName = "raftLogMeta.txt";
-    private static final String logTempFileName = "raftLog-temp.txt";
-    private static final String logMetaDataTempFileName = "raftLogMeta-temp.txt";
-
-    private final ScheduledExecutorService scheduledExecutorService = new ScheduledThreadPoolExecutor(1);
 
     public LogModule(RaftServer currentServer) throws IOException {
         this.currentServer = currentServer;
@@ -82,21 +78,6 @@ public class LogModule {
 
         this.logFile = new File(logFileDir + File.separator + logFileName);
         MyRaftFileUtil.createFile(logFile);
-
-
-        File logMetaDataTempFile = new File(logFileDir + File.separator + logMetaDataTempFileName);
-
-        // 临时的元数据文件存在，说明在日志压缩时宕机了(没来得及完成rename)，需要恢复(这个时候新的日志文件已经生成好了)
-        if(logMetaDataTempFile.exists() && logMetaDataTempFile.length() > 0){
-            File logTempFile = new File(logFileDir + File.separator + logTempFileName);
-            if(logTempFile.exists()){
-                // tempLog替换掉老的日志文件
-                logTempFile.renameTo(logFile);
-            }
-
-            // 元数据文件也替换掉
-            logMetaDataTempFile.renameTo(logMetaDataFile);
-        }
 
         try(RandomAccessFile randomAccessLogMetaDataFile = new RandomAccessFile(logMetaDataFile, "r")) {
             if (randomAccessLogMetaDataFile.length() >= LONG_SIZE) {
@@ -210,6 +191,11 @@ public class LogModule {
      * 左右闭区间（logIndexStart <= {index} <= logIndexEnd）
      * */
     private List<LogEntry> readLocalLogNoSort(long logIndexStart, long logIndexEnd) {
+        if(logIndexStart < 0){
+            // 兜底
+            logIndexStart = 0;
+        }
+
         if(logIndexStart > logIndexEnd){
             throw new MyRaftException("readLocalLog logIndexStart > logIndexEnd! " +
                 "logIndexStart=" + logIndexStart + " logIndexEnd=" + logIndexEnd);
@@ -364,24 +350,29 @@ public class LogModule {
                     appendEntriesRpcParam.setTerm(currentServer.getCurrentTerm());
                     appendEntriesRpcParam.setLeaderCommit(this.lastCommittedIndex);
 
-                    // nextIndex至少为1，所以不必担心-1会为负数
-                    List<LogEntry> logEntryList = this.readLocalLog(nextIndex-1,nextIndex);
-                    if(logEntryList.size() == 2){
-                        // 一般情况能查出两条日志，一个是要同步的日志，一个是要同步日志的前一条记录
+                    int appendLogEntryBatchNum = this.currentServer.getRaftConfig().getAppendLogEntryBatchNum();
+
+                    // 要发送的日志起始值(基于appendLogEntryBatchNum获取需要发送的日志)
+                    long logIndexStart = nextIndex - appendLogEntryBatchNum;
+                    // 读取出[logIndexStart,nextIndex]的日志(左闭右闭区间)
+                    List<LogEntry> logEntryList = this.readLocalLog(logIndexStart,nextIndex);
+                    if(logEntryList.size() == appendLogEntryBatchNum + 1){
+                        // 一般情况能查出appendLogEntryBatchNum+1条日志，第一条(logIndexStart)用于设置prev相关参数
                         LogEntry preLogEntry = logEntryList.get(0);
 
-                        appendEntriesRpcParam.setEntries(Collections.singletonList(logEntryList.get(1)));
+                        appendEntriesRpcParam.setEntries(logEntryList);
                         appendEntriesRpcParam.setPrevLogIndex(preLogEntry.getLogIndex());
                         appendEntriesRpcParam.setPrevLogTerm(preLogEntry.getLogTerm());
-                    }else if(logEntryList.size() == 1){
-                        logEntryList.add(logEntryList.get(0));
-                        // 日志长度为1,且没有快照，说明恰好是第一条日志记录
-                        // 第一条记录的prev的index和term都是-1
+                    }else if(logEntryList.size() > 0 && logEntryList.size() <= appendLogEntryBatchNum){
+                        // 日志长度小于appendLogEntryBatchNum+1，说明最前面的是第一条记录(比如appendLogEntryBatchNum=5，但一共只有3条日志全查出来了)
+                        appendEntriesRpcParam.setEntries(logEntryList);
+
+                        // 约定好第一条记录的prev的index和term都是-1
                         appendEntriesRpcParam.setPrevLogIndex(-1);
                         appendEntriesRpcParam.setPrevLogTerm(-1);
                     } else{
                         // 正常情况是先持久化然后再广播同步日志，所以肯定有
-                        // 不符合预期，日志模块有bug
+                        // 走到这里不符合预期，日志模块有bug
                         throw new MyRaftException("replicationLogEntry logEntryList size error!" +
                             " nextIndex=" + nextIndex + " logEntryList.size=" + logEntryList.size());
                     }
@@ -524,64 +515,5 @@ public class LogModule {
     private String getLogFileDir(){
         return System.getProperty("user.dir")
             + File.separator + currentServer.getServerId();
-    }
-
-    /**
-     * 构建一个删除了已提交日志的新日志文件(日志压缩到快照里了)
-     * */
-    private void buildNewLogFileRemoveCommittedLog() throws IOException {
-        long lastCommitted = getLastCommittedIndex();
-        long lastIndex = getLastIndex();
-
-        // 暂不考虑读取太多造成内存溢出的问题
-        List<LogEntry> logEntryList;
-        if(lastCommitted == lastIndex){
-            // (lastCommitted == lastIndex) 所有日志都提交了，创建一个空的新日志文件
-            logEntryList = new ArrayList<>();
-        }else{
-            // 还有日志没提交，把没提交的记录到新的日志文件中
-            logEntryList = readLocalLog(lastCommitted+1,lastIndex);
-        }
-
-        File tempLogFile = new File(getLogFileDir() + File.separator + logTempFileName);
-        MyRaftFileUtil.createFile(tempLogFile);
-        try(RandomAccessFile randomAccessTempLogFile = new RandomAccessFile(tempLogFile,"rw")) {
-
-            long currentOffset = 0;
-            for (LogEntry logEntry : logEntryList) {
-                writeLog(randomAccessTempLogFile, logEntry);
-                randomAccessTempLogFile.writeLong(currentOffset);
-
-                // 写入偏移量
-                currentOffset = randomAccessTempLogFile.getFilePointer();
-            }
-
-            this.currentOffset = currentOffset;
-        }
-
-        File tempLogMeteDataFile = new File(getLogFileDir() + File.separator + logMetaDataTempFileName);
-        MyRaftFileUtil.createFile(tempLogMeteDataFile);
-
-        // 临时的日志元数据文件写入数据
-        refreshMetadata(tempLogMeteDataFile,currentOffset);
-
-        writeLock.lock();
-        try{
-            // 先删掉原来的日志文件，然后把临时文件重名名为日志文件(delete后、重命名前可能宕机，但是没关系，重启后构造方法里做了对应处理)
-            this.logFile.delete();
-            boolean renameLogFileResult = tempLogFile.renameTo(this.logFile);
-            if(!renameLogFileResult){
-                logger.error("renameLogFile error!");
-            }
-
-            // 先删掉原来的日志元数据文件，然后把临时文件重名名为日志元数据文件(delete后、重命名前可能宕机，但是没关系，重启后构造方法里做了对应处理)
-            this.logMetaDataFile.delete();
-            boolean renameTempLogMeteDataFileResult = tempLogMeteDataFile.renameTo(this.logMetaDataFile);
-            if(!renameTempLogMeteDataFileResult){
-                logger.error("renameTempLogMeteDataFile error!");
-            }
-        }finally {
-            writeLock.unlock();
-        }
     }
 }
