@@ -11,15 +11,14 @@ import myraft.common.model.RaftServerMetaData;
 import myraft.exception.MyRaftException;
 import myraft.module.*;
 import myraft.module.api.KVReplicationStateMachine;
+import myraft.module.model.LocalLogEntry;
 import myraft.task.HeartbeatBroadcastTask;
 import myrpc.common.model.URLAddress;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 public class RaftServer implements RaftService {
 
@@ -154,11 +153,10 @@ public class RaftServer implements RaftService {
         newLogEntry.setLogIndex(this.logModule.getLastIndex() + 1);
         newLogEntry.setCommand(clientRequestParam.getCommand());
 
-
         logger.info("handle setCommand, do writeLocalLog entry={}",newLogEntry);
 
         // 预写入日志
-        logModule.writeLocalLog(newLogEntry);
+        logModule.writeLocalLog(Collections.singletonList(newLogEntry));
 
         logger.info("handle setCommand, do writeLocalLog success!");
 
@@ -271,53 +269,27 @@ public class RaftServer implements RaftService {
             }
         }
 
+        // 走到这里说明找到了最新的一条匹配的记录
         logger.info("doAppendEntries localEntry is match");
 
         List<LogEntry> newLogEntryList = appendEntriesRpcParam.getEntries();
 
-        AppendEntriesRpcResult appendEntriesRpcResult = null;
-        // 新日志的复制操作 todo 有点麻烦，待实现
-//        LogEntry localLogEntry = logModule.readLocalLog(newLogEntry.getLogIndex());
-//        if(localLogEntry == null){
-//            // 本地日志不存在，追加写入
-//            // Append any new entries not already in the log
-//            logModule.writeLocalLog(newLogEntry);
-//
-//            logger.info("doAppendEntries localEntry not exist, append log");
-//
-//            appendEntriesRpcResult = new AppendEntriesRpcResult(this.raftServerMetaDataPersistentModule.getCurrentTerm(), true);
-//        }else{
-//            if(localLogEntry.getLogTerm() == newLogEntry.getLogTerm()){
-//                logger.info("local log existed and term match. return success");
-//                // 本地日志存在，且任期一致,幂等返回成功
-//                appendEntriesRpcResult = new AppendEntriesRpcResult(this.raftServerMetaDataPersistentModule.getCurrentTerm(), true);
-//            }else{
-//                logger.info("local log existed but term conflict. delete conflict log");
-//
-//                // 本地日志存在，但任期不一致
-//                // If an existing entry conflicts with a new one (same index
-//                // but different terms), delete the existing entry and all that
-//                // follow it (§5.3)
-//
-//                // 先删除index以及以后有冲突的日志条目
-//                logModule.deleteLocalLog(newLogEntry.getLogIndex());
-//                // 然后再写入新的日志
-//                logModule.writeLocalLog(newLogEntry);
-//
-//                // 返回成功
-//                appendEntriesRpcResult = new AppendEntriesRpcResult(this.raftServerMetaDataPersistentModule.getCurrentTerm(), true);
-//            }
-//        }
-//
-//        // If leaderCommit > commitIndex, set commitIndex = min(leaderCommit, index of last new entry)
-//        if(appendEntriesRpcParam.getLeaderCommit() > logModule.getLastCommittedIndex()){
-//            // 如果leaderCommit更大，说明当前节点的同步进度慢于leader，以新的entry里的index为准(更高的index还没有在本地保存(因为上面的appendEntry有效性检查))
-//            // 如果index of last new entry更大，说明当前节点的同步进度是和leader相匹配的，commitIndex以leader最新提交的为准
-//            long lastCommittedIndex = Math.min(appendEntriesRpcParam.getLeaderCommit(), newLogEntry.getLogIndex());
-//            pushStatemachineApply(lastCommittedIndex);
-//        }
+        // 1. Append any new entries not already in the log
+        // 2. If an existing entry conflicts with a new one (same index but different terms),
+        //    delete the existing entry and all that follow it (§5.3)
+        // 新日志的复制操作（直接整个覆盖掉prevLogIndex之后的所有日志,以leader发过来的日志为准）
+        logModule.writeLocalLog(newLogEntryList, appendEntriesRpcParam.getPrevLogIndex());
 
-        return appendEntriesRpcResult;
+        // If leaderCommit > commitIndex, set commitIndex = min(leaderCommit, index of last new entry)
+        if(appendEntriesRpcParam.getLeaderCommit() > logModule.getLastCommittedIndex()){
+            // 如果leaderCommit更大，说明当前节点的同步进度慢于leader，以新的entry里的index为准(更高的index还没有在本地保存(因为上面的appendEntry有效性检查))
+            // 如果index of last new entry更大，说明当前节点的同步进度是和leader相匹配的，commitIndex以leader最新提交的为准
+            long lastCommittedIndex = Math.min(appendEntriesRpcParam.getLeaderCommit(), newLogEntryList.get(newLogEntryList.size()-1).getLogIndex());
+            pushStatemachineApply(lastCommittedIndex);
+        }
+
+        // 返回成功
+        return new AppendEntriesRpcResult(this.raftServerMetaDataPersistentModule.getCurrentTerm(), true);
     }
 
     private void pushStatemachineApply(long lastCommittedIndex){
@@ -329,7 +301,7 @@ public class RaftServer implements RaftService {
             logger.info("pushStatemachineApply.apply, lastApplied={},lastCommittedIndex={}",lastApplied,lastCommittedIndex);
 
             // 全读取出来(读取出来是按照index从小到大排好序的)
-            List<LogEntry> logEntryList = logModule.readLocalLog(lastApplied+1,lastCommittedIndex);
+            List<LocalLogEntry> logEntryList = logModule.readLocalLog(lastApplied+1,lastCommittedIndex);
             for(LogEntry logEntry : logEntryList){
                 logger.info("kvReplicationStateMachine.apply, logEntry={}",logEntry);
 

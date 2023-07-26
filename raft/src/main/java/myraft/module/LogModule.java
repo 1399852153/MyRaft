@@ -7,6 +7,7 @@ import myraft.api.model.AppendEntriesRpcResult;
 import myraft.api.model.LogEntry;
 import myraft.api.service.RaftService;
 import myraft.exception.MyRaftException;
+import myraft.module.model.LocalLogEntry;
 import myraft.util.util.CommonUtil;
 import myraft.util.util.MyRaftFileUtil;
 import myrpc.common.util.JsonUtil;
@@ -22,6 +23,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.*;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
+import java.util.stream.Collectors;
 
 public class LogModule {
 
@@ -33,7 +35,7 @@ public class LogModule {
     private final File logMetaDataFile;
 
     /**
-     * 每条记录后面都带上这个，用于找到
+     * 每条记录后面都带上当时的currentOffset，用于找到对应记录（currentOffset用于持久化）
      * */
     private volatile long currentOffset;
 
@@ -106,31 +108,57 @@ public class LogModule {
         }
     }
 
+    public void writeLocalLog(LogEntry LogEntry){
+        writeLocalLog(Collections.singletonList(LogEntry),this.lastIndex);
+    }
+
+    public void writeLocalLog(List<LogEntry> logEntryList){
+        writeLocalLog(logEntryList,this.lastIndex);
+    }
+
     /**
      * 按照顺序追加写入日志
      * */
-    public void writeLocalLog(LogEntry logEntry){
+    public void writeLocalLog(List<LogEntry> logEntryList, long logIndex){
+        if(logEntryList.isEmpty()){
+            return;
+        }
+
         boolean lockSuccess = writeLock.tryLock();
         if(!lockSuccess){
             logger.error("writeLocalLog lock error!");
             return;
         }
 
+        // 找到标记点
+        LocalLogEntry localLogEntry = readLocalLog(logIndex);
+        if(localLogEntry == null){
+            localLogEntry = LocalLogEntry.getEmptyLogEntry();
+        }
+
+        long offset = localLogEntry.getOffset();
+
         try(RandomAccessFile randomAccessFile = new RandomAccessFile(logFile,"rw")){
-            // 追加写入
-            randomAccessFile.seek(logFile.length());
 
-            writeLog(randomAccessFile,logEntry);
-            randomAccessFile.writeLong(this.currentOffset);
+            for(LogEntry logEntryItem : logEntryList){
+                // 在offset指定的位置后面追加写入
+                randomAccessFile.seek(offset);
 
-            // 更新偏移量
+                writeLog(randomAccessFile,logEntryItem);
+
+                randomAccessFile.writeLong(offset);
+
+                // 更新偏移量
+                offset = randomAccessFile.getFilePointer();
+
+                // 持久化currentOffset的值，二阶段提交修改currentOffset的值，宕机恢复时以持久化的值为准
+                refreshMetadata(this.logMetaDataFile,offset);
+            }
+
+            // 写完了这一批日志，刷新currentOffset
             this.currentOffset = randomAccessFile.getFilePointer();
-
-            // 持久化currentOffset的值，二阶段提交修改currentOffset的值，宕机恢复时以持久化的值为准
-            refreshMetadata(this.logMetaDataFile,this.currentOffset);
-
             // 设置最后写入的索引编号，lastIndex
-            this.lastIndex = logEntry.getLogIndex();
+            this.lastIndex = logEntryList.get(logEntryList.size()-1).getLogIndex();
         } catch (IOException e) {
             throw new MyRaftException("logModule writeLog error!",e);
         } finally {
@@ -138,7 +166,7 @@ public class LogModule {
         }
     }
 
-    private static void writeLog(RandomAccessFile randomAccessFile,LogEntry logEntry) throws IOException {
+    private static void writeLog(RandomAccessFile randomAccessFile, LogEntry logEntry) throws IOException {
         randomAccessFile.writeLong(logEntry.getLogIndex());
         randomAccessFile.writeInt(logEntry.getLogTerm());
 
@@ -150,11 +178,11 @@ public class LogModule {
     /**
      * 根据日志索引号，获得对应的日志记录
      * */
-    public LogEntry readLocalLog(long logIndex) {
+    public LocalLogEntry readLocalLog(long logIndex) {
         readLock.lock();
 
         try {
-            List<LogEntry> logEntryList = readLocalLogNoSort(logIndex, logIndex);
+            List<LocalLogEntry> logEntryList = readLocalLogNoSort(logIndex, logIndex);
             if (logEntryList.isEmpty()) {
                 return null;
             } else {
@@ -170,12 +198,12 @@ public class LogModule {
      * 根据日志索引号，获得对应的日志记录
      * 左右闭区间（logIndexStart <= {index} <= logIndexEnd）
      * */
-    public List<LogEntry> readLocalLog(long logIndexStart, long logIndexEnd) {
+    public List<LocalLogEntry> readLocalLog(long logIndexStart, long logIndexEnd) {
         readLock.lock();
 
         try {
             // 读取出来的时候是index从大到小排列的
-            List<LogEntry> logEntryList = readLocalLogNoSort(logIndexStart, logIndexEnd);
+            List<LocalLogEntry> logEntryList = readLocalLogNoSort(logIndexStart, logIndexEnd);
 
             // 翻转一下，令其按index从小到大排列
             Collections.reverse(logEntryList);
@@ -190,12 +218,7 @@ public class LogModule {
      * 根据日志索引号，获得对应的日志记录
      * 左右闭区间（logIndexStart <= {index} <= logIndexEnd）
      * */
-    private List<LogEntry> readLocalLogNoSort(long logIndexStart, long logIndexEnd) {
-        if(logIndexStart < 0){
-            // 兜底
-            logIndexStart = 0;
-        }
-
+    private List<LocalLogEntry> readLocalLogNoSort(long logIndexStart, long logIndexEnd) {
         if(logIndexStart > logIndexEnd){
             throw new MyRaftException("readLocalLog logIndexStart > logIndexEnd! " +
                 "logIndexStart=" + logIndexStart + " logIndexEnd=" + logIndexEnd);
@@ -207,7 +230,7 @@ public class LogModule {
         }
 
         try {
-            List<LogEntry> logEntryList = new ArrayList<>();
+            List<LocalLogEntry> logEntryList = new ArrayList<>();
             try (RandomAccessFile randomAccessFile = new RandomAccessFile(this.logFile, "r")) {
                 // 从后往前找
                 long offset = this.currentOffset;
@@ -229,20 +252,14 @@ public class LogModule {
                         return logEntryList;
                     }
 
+                    LocalLogEntry localLogEntry = readLocalLogByOffset(randomAccessFile, targetLogIndex);
                     if (targetLogIndex <= logIndexEnd) {
                         // 找到的符合要求
-                        logEntryList.add(readLocalLogByOffset(randomAccessFile, targetLogIndex));
-                    } else {
-                        // 不符合要求
-
-                        // 跳过一些
-                        randomAccessFile.readInt();
-                        int commandLength = randomAccessFile.readInt();
-                        randomAccessFile.read(new byte[commandLength]);
+                        logEntryList.add(localLogEntry);
                     }
 
                     // preLogOffset
-                    offset = randomAccessFile.readLong();
+                    offset = localLogEntry.getOffset();
                     if (offset < LONG_SIZE) {
                         // 整个文件都读完了
                         return logEntryList;
@@ -355,7 +372,8 @@ public class LogModule {
                     // 要发送的日志起始值(基于appendLogEntryBatchNum获取需要发送的日志)
                     long logIndexStart = nextIndex - appendLogEntryBatchNum;
                     // 读取出[logIndexStart,nextIndex]的日志(左闭右闭区间)
-                    List<LogEntry> logEntryList = this.readLocalLog(logIndexStart,nextIndex);
+                    List<LocalLogEntry> LocalLogEntryList = this.readLocalLog(logIndexStart,nextIndex);
+                    List<LogEntry> logEntryList = LocalLogEntryList.stream().map(item-> (LogEntry)item).collect(Collectors.toList());
                     if(logEntryList.size() == appendLogEntryBatchNum + 1){
                         // 一般情况能查出appendLogEntryBatchNum+1条日志，第一条(logIndexStart)用于设置prev相关参数
                         LogEntry preLogEntry = logEntryList.get(0);
@@ -489,8 +507,8 @@ public class LogModule {
         this.logMetaDataFile.delete();
     }
 
-    private LogEntry readLocalLogByOffset(RandomAccessFile randomAccessFile, long logIndex) throws IOException {
-        LogEntry logEntry = new LogEntry();
+    private LocalLogEntry readLocalLogByOffset(RandomAccessFile randomAccessFile, long logIndex) throws IOException {
+        LocalLogEntry logEntry = new LocalLogEntry();
         logEntry.setLogIndex(logIndex);
         logEntry.setLogTerm(randomAccessFile.readInt());
 
@@ -502,6 +520,7 @@ public class LogModule {
         Command command = JsonUtil.json2Obj(jsonStr, Command.class);
         logEntry.setCommand(command);
 
+        logEntry.setOffset(randomAccessFile.readLong());
         return logEntry;
     }
 

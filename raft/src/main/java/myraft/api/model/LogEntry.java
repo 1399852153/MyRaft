@@ -2,6 +2,7 @@ package myraft.api.model;
 
 
 import myraft.api.command.Command;
+import myraft.module.model.LocalLogEntry;
 
 /**
  * raft日志条目
@@ -47,10 +48,11 @@ public class LogEntry {
         this.command = command;
     }
 
-    public static LogEntry getEmptyLogEntry(){
-        LogEntry logEntry = new LogEntry();
+    public static LocalLogEntry getEmptyLogEntry(){
+        LocalLogEntry logEntry = new LocalLogEntry();
         logEntry.setLogTerm(-1);
         logEntry.setLogIndex(-1);
+        logEntry.setOffset(0);
 
         return logEntry;
     }
