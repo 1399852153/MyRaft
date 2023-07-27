@@ -8,15 +8,36 @@ import myraft.api.model.LogEntry;
 public class LocalLogEntry extends LogEntry {
 
     /**
-     * 相当于是写入该日志时的起始位置(便于定位到日志)
+     * 该日志时的末尾位置
      * */
-    private long offset;
+    private long startOffset;
 
-    public long getOffset() {
-        return offset;
+    /**
+     * 该日志时的末尾位置
+     * */
+    private long endOffset;
+
+    public long getStartOffset() {
+        return startOffset;
     }
 
-    public void setOffset(long offset) {
-        this.offset = offset;
+    public void setStartOffset(long startOffset) {
+        this.startOffset = startOffset;
+    }
+
+    public long getEndOffset() {
+        return endOffset;
+    }
+
+    public void setEndOffset(long endOffset) {
+        this.endOffset = endOffset;
+    }
+
+    @Override
+    public String toString() {
+        return "LocalLogEntry{" +
+            "preOffset=" + startOffset +
+            ", endOffset=" + endOffset +
+            "} " + super.toString();
     }
 }

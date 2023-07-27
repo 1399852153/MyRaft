@@ -11,6 +11,7 @@ import org.junit.Test;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 
 public class LogModuleTest {
@@ -19,7 +20,7 @@ public class LogModuleTest {
     public void test() throws Exception {
         String serverId = "raft-99999";
         RaftNodeConfig raftNodeConfig = new RaftNodeConfig(serverId);
-        RaftServer raftServer = new RaftServer(new RaftConfig(raftNodeConfig, Arrays.asList(raftNodeConfig)));
+        RaftServer raftServer = new RaftServer(new RaftConfig(raftNodeConfig, Collections.singletonList(raftNodeConfig)));
         raftServer.setOtherNodeInCluster(new ArrayList<>());
         LogModule logModule = new LogModule(raftServer);
         logModule.clean();
@@ -41,7 +42,7 @@ public class LogModuleTest {
             LocalLogEntry LocalLogEntry = logModule.readLocalLog(0);
             Assert.assertEquals(LocalLogEntry.getLogIndex(),0);
             Assert.assertEquals(LocalLogEntry.getLogTerm(),1);
-            Assert.assertEquals(LocalLogEntry.getOffset(),0);
+            Assert.assertEquals(LocalLogEntry.getStartOffset(),0);
         }
 
         {
@@ -75,35 +76,31 @@ public class LogModuleTest {
             Assert.assertEquals(logEntryList.get(1).getLogTerm(),1);
 
         }
-//
-//        {
-//            LocalLogEntry newLogEntry = new LocalLogEntry();
-//            newLogEntry.setLogIndex(3);
-//            newLogEntry.setLogTerm(1);
-//            newLogEntry.setCommand(new SetCommand("k1","v4"));
-//            logModule.writeLocalLog(newLogEntry);
-//
-//            LogEntry newLogEntry2 = new LogEntry();
-//            newLogEntry2.setLogIndex(4);
-//            newLogEntry2.setLogTerm(1);
-//            newLogEntry2.setCommand(new SetCommand("k1","v5"));
-//            logModule.writeLocalLog(newLogEntry2);
-//
-//            List<LocalLogEntry> logEntryList = logModule.readLocalLog(2,5);
-//
-//            Assert.assertEquals(logEntryList.get(0).getLogIndex(),2);
-//            Assert.assertEquals(logEntryList.get(0).getLogTerm(),1);
-//
-//            Assert.assertEquals(logEntryList.get(1).getLogIndex(),3);
-//            Assert.assertEquals(logEntryList.get(1).getLogTerm(),1);
-//
-//            Assert.assertEquals(logEntryList.get(2).getLogIndex(),4);
-//            Assert.assertEquals(logEntryList.get(2).getLogTerm(),1);
-//
-//            Assert.assertEquals(logEntryList.get(3).getLogIndex(),5);
-//            Assert.assertEquals(logEntryList.get(3).getLogTerm(),1);
-//
-//        }
+
+        {
+            LocalLogEntry newLogEntry = new LocalLogEntry();
+            newLogEntry.setLogIndex(3);
+            newLogEntry.setLogTerm(1);
+            newLogEntry.setCommand(new SetCommand("k1","v4"));
+            logModule.writeLocalLog(newLogEntry);
+
+            LogEntry newLogEntry2 = new LogEntry();
+            newLogEntry2.setLogIndex(4);
+            newLogEntry2.setLogTerm(1);
+            newLogEntry2.setCommand(new SetCommand("k1","v5"));
+            logModule.writeLocalLog(newLogEntry2);
+
+            List<LocalLogEntry> logEntryList = logModule.readLocalLog(2,5);
+
+            Assert.assertEquals(logEntryList.get(0).getLogIndex(),2);
+            Assert.assertEquals(logEntryList.get(0).getLogTerm(),1);
+
+            Assert.assertEquals(logEntryList.get(1).getLogIndex(),3);
+            Assert.assertEquals(logEntryList.get(1).getLogTerm(),1);
+
+            Assert.assertEquals(logEntryList.get(2).getLogIndex(),4);
+            Assert.assertEquals(logEntryList.get(2).getLogTerm(),1);
+        }
 
         logModule.clean();
     }

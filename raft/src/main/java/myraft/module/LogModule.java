@@ -136,7 +136,7 @@ public class LogModule {
             localLogEntry = LocalLogEntry.getEmptyLogEntry();
         }
 
-        long offset = localLogEntry.getOffset();
+        long offset = localLogEntry.getEndOffset();
 
         try(RandomAccessFile randomAccessFile = new RandomAccessFile(logFile,"rw")){
 
@@ -258,14 +258,13 @@ public class LogModule {
                         logEntryList.add(localLogEntry);
                     }
 
-                    // preLogOffset
-                    offset = localLogEntry.getOffset();
+                    offset = localLogEntry.getStartOffset();
                     if (offset < LONG_SIZE) {
                         // 整个文件都读完了
                         return logEntryList;
                     }
 
-                    // 跳转到记录的offset处
+                    // 跳转到上一条记录的offset处
                     randomAccessFile.seek(offset - LONG_SIZE);
                 }
             } catch (IOException e) {
@@ -520,7 +519,9 @@ public class LogModule {
         Command command = JsonUtil.json2Obj(jsonStr, Command.class);
         logEntry.setCommand(command);
 
-        logEntry.setOffset(randomAccessFile.readLong());
+        // 日志是位于[startOffset,endOffset)之间的，左闭右开
+        logEntry.setStartOffset(randomAccessFile.readLong());
+        logEntry.setEndOffset(randomAccessFile.getFilePointer());
         return logEntry;
     }
 

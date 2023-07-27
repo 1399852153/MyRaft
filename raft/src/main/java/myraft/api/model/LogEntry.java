@@ -52,7 +52,7 @@ public class LogEntry {
         LocalLogEntry logEntry = new LocalLogEntry();
         logEntry.setLogTerm(-1);
         logEntry.setLogIndex(-1);
-        logEntry.setOffset(0);
+        logEntry.setEndOffset(0);
 
         return logEntry;
     }
