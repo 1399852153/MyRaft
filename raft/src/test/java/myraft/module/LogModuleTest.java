@@ -118,15 +118,85 @@ public class LogModuleTest {
 
         {
             LogEntry newLogEntry = new LogEntry();
-            newLogEntry.setLogIndex(1);
+            newLogEntry.setLogIndex(0);
             newLogEntry.setLogTerm(1);
             newLogEntry.setCommand(new SetCommand("k1","v1"));
 
             logModule.writeLocalLog(newLogEntry);
 
             LogEntry logEntry = logModule.getLastLogEntry();
+            Assert.assertEquals(logEntry.getLogIndex(),0);
+            Assert.assertEquals(logEntry.getLogTerm(),1);
+        }
+
+        {
+            LogEntry newLogEntry = new LogEntry();
+            newLogEntry.setLogIndex(1);
+            newLogEntry.setLogTerm(1);
+            newLogEntry.setCommand(new SetCommand("k1","v2"));
+
+            logModule.writeLocalLog(newLogEntry);
+
+            LogEntry logEntry = logModule.getLastLogEntry();
             Assert.assertEquals(logEntry.getLogIndex(),1);
             Assert.assertEquals(logEntry.getLogTerm(),1);
+        }
+
+        {
+            LogEntry newLogEntry = new LogEntry();
+            newLogEntry.setLogIndex(0);
+            newLogEntry.setLogTerm(1);
+            newLogEntry.setCommand(new SetCommand("k1","v1"));
+
+            logModule.writeLocalLog(Collections.singletonList(newLogEntry),-1);
+
+            LogEntry logEntry = logModule.getLastLogEntry();
+            Assert.assertEquals(logEntry.getLogIndex(),0);
+            Assert.assertEquals(logEntry.getLogTerm(),1);
+
+            List<LocalLogEntry> logEntryList = logModule.readLocalLog(0,5);
+            Assert.assertEquals(logEntryList.size(),1);
+        }
+
+        {
+            LogEntry newLogEntry = new LogEntry();
+            newLogEntry.setLogIndex(1);
+            newLogEntry.setLogTerm(1);
+            newLogEntry.setCommand(new SetCommand("k1","v2"));
+
+            logModule.writeLocalLog(Collections.singletonList(newLogEntry));
+
+            LogEntry newLogEntry2 = new LogEntry();
+            newLogEntry2.setLogIndex(2);
+            newLogEntry2.setLogTerm(2);
+            newLogEntry2.setCommand(new SetCommand("k1","v3"));
+            logModule.writeLocalLog(Collections.singletonList(newLogEntry2));
+
+            LogEntry newLogEntry3 = new LogEntry();
+            newLogEntry3.setLogIndex(3);
+            newLogEntry3.setLogTerm(2);
+            newLogEntry3.setCommand(new SetCommand("k1","v4"));
+            logModule.writeLocalLog(Collections.singletonList(newLogEntry3));
+
+            List<LocalLogEntry> logEntryList = logModule.readLocalLog(0,5);
+            Assert.assertEquals(logEntryList.size(),4);
+        }
+
+        {
+            LogEntry newLogEntry = new LogEntry();
+            newLogEntry.setLogIndex(1);
+            newLogEntry.setLogTerm(1);
+            newLogEntry.setCommand(new SetCommand("k1","v2"));
+
+            LogEntry newLogEntry2 = new LogEntry();
+            newLogEntry2.setLogIndex(2);
+            newLogEntry2.setLogTerm(1);
+            newLogEntry2.setCommand(new SetCommand("k1","v2"));
+
+            logModule.writeLocalLog(Arrays.asList(newLogEntry,newLogEntry2),0);
+
+            List<LocalLogEntry> logEntryList = logModule.readLocalLog(0,5);
+            Assert.assertEquals(logEntryList.size(),3);
         }
 
         logModule.clean();

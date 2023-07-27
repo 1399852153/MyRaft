@@ -117,7 +117,7 @@ public class LogModule {
     }
 
     /**
-     * 按照顺序追加写入日志
+     * 在logIndex后覆盖写入日志
      * */
     public void writeLocalLog(List<LogEntry> logEntryList, long logIndex){
         if(logEntryList.isEmpty()){
