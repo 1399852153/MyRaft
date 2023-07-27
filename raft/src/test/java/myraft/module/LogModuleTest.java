@@ -195,8 +195,11 @@ public class LogModuleTest {
 
             logModule.writeLocalLog(Arrays.asList(newLogEntry,newLogEntry2),0);
 
-            List<LocalLogEntry> logEntryList = logModule.readLocalLog(0,5);
+            List<LocalLogEntry> logEntryList = logModule.readLocalLog(0,2);
             Assert.assertEquals(logEntryList.size(),3);
+
+            Assert.assertEquals(logModule.readLocalLog(0,1).size(),2);
+            Assert.assertEquals(logModule.readLocalLog(1,2).size(),2);
         }
 
         logModule.clean();
