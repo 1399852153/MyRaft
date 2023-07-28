@@ -19,6 +19,7 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.util.*;
+import java.util.stream.Collectors;
 
 public class RaftServer implements RaftService {
 
@@ -42,7 +43,7 @@ public class RaftServer implements RaftService {
     /**
      * raft服务器元数据(当前任期值currentTerm、当前投票给了谁votedFor)
      * */
-    private final RaftServerMetaDataPersistentModule raftServerMetaDataPersistentModule;
+    private RaftServerMetaDataPersistentModule raftServerMetaDataPersistentModule;
 
     /**
      * 当前服务认为的leader节点的Id
@@ -74,15 +75,14 @@ public class RaftServer implements RaftService {
         this.raftConfig = raftConfig;
         // 初始化时都是follower
         this.serverStatusEnum = ServerStatusEnum.FOLLOWER;
-
-        // 服务器元数据模块
-        this.raftServerMetaDataPersistentModule = new RaftServerMetaDataPersistentModule(raftConfig.getServerId());
     }
 
     public void init(List<RaftService> otherNodeInCluster){
         // 集群中的其它节点服务
         this.otherNodeInCluster = otherNodeInCluster;
 
+        // 服务器元数据模块
+        this.raftServerMetaDataPersistentModule = new RaftServerMetaDataPersistentModule(raftConfig.getServerId());
         try {
             // 日志模块
             logModule = new LogModule(this);
@@ -90,11 +90,14 @@ public class RaftServer implements RaftService {
             throw new MyRaftException("init LogModule error!",e);
         }
 
+        // leader选举模块
         raftLeaderElectionModule = new RaftLeaderElectionModule(this);
+        // leader心跳广播模块
         raftHeartbeatBroadcastModule = new RaftHeartbeatBroadcastModule(this);
+        // 状态机模块
         kvReplicationStateMachine = new SimpleReplicationStateMachine(this.serverId);
 
-        logger.info("raft server init end! otherNodeInCluster={}, currentServerId={}",otherNodeInCluster,serverId);
+        logger.info("raft server init success! otherNodeInCluster={}, currentServerId={}",otherNodeInCluster,serverId);
     }
 
     @Override
@@ -284,7 +287,9 @@ public class RaftServer implements RaftService {
         if(appendEntriesRpcParam.getLeaderCommit() > logModule.getLastCommittedIndex()){
             // 如果leaderCommit更大，说明当前节点的同步进度慢于leader，以新的entry里的index为准(更高的index还没有在本地保存(因为上面的appendEntry有效性检查))
             // 如果index of last new entry更大，说明当前节点的同步进度是和leader相匹配的，commitIndex以leader最新提交的为准
-            long lastCommittedIndex = Math.min(appendEntriesRpcParam.getLeaderCommit(), newLogEntryList.get(newLogEntryList.size()-1).getLogIndex());
+
+            LogEntry lastNewEntry = newLogEntryList.get(newLogEntryList.size()-1);
+            long lastCommittedIndex = Math.min(appendEntriesRpcParam.getLeaderCommit(), lastNewEntry.getLogIndex());
             pushStatemachineApply(lastCommittedIndex);
         }
 
@@ -302,12 +307,13 @@ public class RaftServer implements RaftService {
 
             // 全读取出来(读取出来是按照index从小到大排好序的)
             List<LocalLogEntry> logEntryList = logModule.readLocalLog(lastApplied+1,lastCommittedIndex);
-            for(LogEntry logEntry : logEntryList){
-                logger.info("kvReplicationStateMachine.apply, logEntry={}",logEntry);
+            List<SetCommand> setCommandList = logEntryList.stream()
+                .filter(item->item.getCommand() instanceof SetCommand)
+                .map(item->(SetCommand)item.getCommand())
+                .collect(Collectors.toList());
 
-                // 按照顺序依次作用到状态机中
-                this.kvReplicationStateMachine.apply((SetCommand) logEntry.getCommand());
-            }
+            // 按照顺序依次作用到状态机中
+            this.kvReplicationStateMachine.batchApply(setCommandList);
         }
 
         this.logModule.setLastCommittedIndex(lastCommittedIndex);

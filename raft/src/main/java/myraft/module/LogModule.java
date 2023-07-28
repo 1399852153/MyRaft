@@ -442,7 +442,7 @@ public class LogModule {
         // 获得结果
         List<AppendEntriesRpcResult> appendEntriesRpcResultList = CommonUtil.concurrentGetRpcFutureResult(
                 "do appendEntries", futureList,
-                this.rpcThreadPool,3, TimeUnit.SECONDS);
+                this.rpcThreadPool,2, TimeUnit.SECONDS);
 
         logger.info("leader replicationLogEntry appendEntriesRpcResultList={}",appendEntriesRpcResultList);
 

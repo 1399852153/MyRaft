@@ -1,6 +1,5 @@
 package myraft.module;
 
-import com.fasterxml.jackson.core.type.TypeReference;
 import myraft.api.command.EmptySetCommand;
 import myraft.api.command.SetCommand;
 import myraft.module.api.KVReplicationStateMachine;
@@ -10,7 +9,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.File;
-import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
@@ -21,7 +20,7 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
 public class SimpleReplicationStateMachine implements KVReplicationStateMachine {
     private static final Logger logger = LoggerFactory.getLogger(SimpleReplicationStateMachine.class);
 
-    private volatile ConcurrentHashMap<String,String> kvMap;
+    private final ConcurrentHashMap<String,String> kvMap;
 
     private final File persistenceFile;
 
@@ -61,36 +60,36 @@ public class SimpleReplicationStateMachine implements KVReplicationStateMachine 
     }
 
     @Override
-    public String get(String key) {
-        readLock.lock();
-
-        try {
-            return kvMap.get(key);
-        }finally {
-            readLock.unlock();
-        }
-    }
-
-    @Override
-    public void installSnapshot(byte[] snapshot) {
+    public void batchApply(List<SetCommand> setCommandList) {
         writeLock.lock();
+        try{
+            logger.info("batchApply setCommand start,size={}",setCommandList.size());
 
-        try {
-            // 简单起见，一把梭
-            String mapJson = new String(snapshot, StandardCharsets.UTF_8);
-            this.kvMap = JsonUtil.json2Obj(mapJson, new TypeReference<ConcurrentHashMap<String, String>>() {});
+            for(SetCommand setCommand : setCommandList){
+                if(setCommand instanceof EmptySetCommand){
+                    // no-op，状态机无需做任何操作
+                    logger.info("apply EmptySetCommand quick return!");
+                    return;
+                }
+
+                logger.info("apply setCommand start,{}",setCommand);
+                kvMap.put(setCommand.getKey(), setCommand.getValue());
+            }
+
+            // 持久化(简单起见，暂时不考虑性能问题)
+            MyRaftFileUtil.writeInFile(persistenceFile, JsonUtil.obj2Str(kvMap));
+            logger.info("apply setCommand end");
         }finally {
             writeLock.unlock();
         }
     }
 
     @Override
-    public byte[] buildSnapshot() {
+    public String get(String key) {
         readLock.lock();
 
         try {
-            String mapJson = JsonUtil.obj2Str(kvMap);
-            return mapJson.getBytes(StandardCharsets.UTF_8);
+            return kvMap.get(key);
         }finally {
             readLock.unlock();
         }
