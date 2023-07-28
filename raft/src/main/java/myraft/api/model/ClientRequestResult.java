@@ -2,7 +2,9 @@ package myraft.api.model;
 
 import myrpc.common.model.URLAddress;
 
-public class ClientRequestResult {
+import java.io.Serializable;
+
+public class ClientRequestResult implements Serializable {
 
     /**
      * get读请求的返回值，set写请求时为null

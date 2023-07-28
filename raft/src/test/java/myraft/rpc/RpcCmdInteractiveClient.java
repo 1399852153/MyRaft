@@ -21,6 +21,7 @@ public class RpcCmdInteractiveClient {
     public static void main(String[] args) {
         RaftClient raftClient = new RaftClient(RaftClusterGlobalConfig.registry);
         raftClient.init();
+        raftClient.setRaftNodeConfigList(RaftClusterGlobalConfig.raftNodeConfigList);
 
         Scanner scan = new Scanner(System.in);
 

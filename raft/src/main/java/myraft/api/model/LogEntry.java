@@ -4,10 +4,12 @@ package myraft.api.model;
 import myraft.api.command.Command;
 import myraft.module.model.LocalLogEntry;
 
+import java.io.Serializable;
+
 /**
  * raft日志条目
  * */
-public class LogEntry {
+public class LogEntry implements Serializable {
 
     /**
      * 发布日志时的leader的任期编号

@@ -2,7 +2,9 @@ package myraft.api.model;
 
 import myraft.api.command.Command;
 
-public class ClientRequestParam {
+import java.io.Serializable;
+
+public class ClientRequestParam implements Serializable {
 
     private Command command;
 

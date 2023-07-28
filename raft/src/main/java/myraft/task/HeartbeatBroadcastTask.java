@@ -52,7 +52,7 @@ public class HeartbeatBroadcastTask implements Runnable{
      * @return 是否大多数节点依然认为自己是leader
      * */
     public static boolean doHeartbeatBroadcast(RaftServer currentServer){
-        logger.info("do HeartbeatBroadcast start {}",currentServer.getServerId());
+        logger.debug("do HeartbeatBroadcast start {}",currentServer.getServerId());
 
         // 先刷新自己的心跳时间
         currentServer.getRaftLeaderElectionModule().refreshLastHeartbeatTime();
