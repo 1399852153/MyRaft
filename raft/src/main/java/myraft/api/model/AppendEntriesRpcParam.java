@@ -1,11 +1,12 @@
 package myraft.api.model;
 
+import java.io.Serializable;
 import java.util.List;
 
 /**
  * 追加日志条目的RPC接口参数对象
  * */
-public class AppendEntriesRpcParam {
+public class AppendEntriesRpcParam implements Serializable {
 
     /**
      * 当前leader的任期值
