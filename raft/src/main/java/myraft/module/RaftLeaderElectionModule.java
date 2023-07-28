@@ -1,6 +1,7 @@
 package myraft.module;
 
 import myraft.RaftServer;
+import myraft.api.model.LogEntry;
 import myraft.api.model.RequestVoteRpcParam;
 import myraft.api.model.RequestVoteRpcResult;
 import myraft.common.enums.ServerStatusEnum;
@@ -90,6 +91,29 @@ public class RaftLeaderElectionModule {
                 currentServer.getVotedFor(),currentServer.getServerId());
             return new RequestVoteRpcResult(this.currentServer.getCurrentTerm(),false);
         }
+
+        // 考虑日志条目索引以及任期值是否满足条件的情况（第5.4节中提到的安全性）
+        // 保证leader必须拥有所有已提交的日志，即发起投票的candidate日志一定要比投票给它的节点更新
+        LogEntry lastLogEntry = currentServer.getLogModule().getLastLogEntry();
+        logger.info("requestVoteProcess lastLogEntry={}",lastLogEntry);
+        if(lastLogEntry.getLogTerm() > requestVoteRpcParam.getLastLogTerm()){
+            // If the logs have last entries with different terms, then the log with the later term is more up-to-date.
+            // 当前节点的last日志任期比发起投票的candidate更高(比candidate更新)，不投票给它
+            logger.info("lastLogEntry.term > candidate.lastLogTerm! voteGranted=false");
+            return new RequestVoteRpcResult(this.currentServer.getCurrentTerm(),false);
+        }else if(lastLogEntry.getLogTerm() == requestVoteRpcParam.getLastLogTerm() &&
+            lastLogEntry.getLogIndex() > requestVoteRpcParam.getLastLogIndex()){
+            // If the logs end with the same term, then whichever log is longer is more up-to-date.
+            // 当前节点的last日志和发起投票的candidate任期一样，但是index比candidate的高(比candidate更新)，不投票给它
+
+            logger.info("lastLogEntry.term == candidate.lastLogTerm && " +
+                "lastLogEntry.index > candidate.lastLogIndex! voteGranted=false");
+            return new RequestVoteRpcResult(this.currentServer.getCurrentTerm(),false);
+        }else{
+            // candidate的日志至少与当前节点一样新(或者更新)，通过检查，可以投票给它
+            logger.info("candidate log at least as new as the current node, valid passed!");
+        }
+
 
         // 投票校验通过,刷新元数据
         this.currentServer.refreshRaftServerMetaData(

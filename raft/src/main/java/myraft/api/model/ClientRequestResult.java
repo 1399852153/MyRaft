@@ -1,6 +1,7 @@
 package myraft.api.model;
 
-import myrpc.common.model.URLAddress;
+
+import myraft.api.URLAddress;
 
 import java.io.Serializable;
 
@@ -43,5 +44,14 @@ public class ClientRequestResult implements Serializable {
 
     public void setSuccess(boolean success) {
         this.success = success;
+    }
+
+    @Override
+    public String toString() {
+        return "ClientRequestResult{" +
+            "value='" + value + '\'' +
+            ", leaderAddress=" + leaderAddress +
+            ", success=" + success +
+            '}';
     }
 }

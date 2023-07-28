@@ -61,7 +61,7 @@ public class HeartbeatTimeoutCheckTask implements Runnable{
         Date lastHeartbeatTime = raftLeaderElectionModule.getLastHeartbeatTime();
         long diffTime = currentDate.getTime() - lastHeartbeatTime.getTime();
 
-        logger.info("currentDate={}, lastHeartbeatTime={}, diffTime={}, serverId={}",
+        logger.debug("currentDate={}, lastHeartbeatTime={}, diffTime={}, serverId={}",
             currentDate,lastHeartbeatTime,diffTime,currentServer.getServerId());
         // 心跳超时判断
         if(diffTime > (electionTimeout * 1000L)){

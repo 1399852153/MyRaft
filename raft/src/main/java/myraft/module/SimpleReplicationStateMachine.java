@@ -34,8 +34,9 @@ public class SimpleReplicationStateMachine implements KVReplicationStateMachine 
         this.persistenceFile = new File(userPath + File.separator + "raftReplicationStateMachine-" + serverId + ".txt");
         MyRaftFileUtil.createFile(persistenceFile);
 
-        // 状态机启动时不以持久化文件中的数据为准，而是
+        // 状态机启动时不以持久化文件中的数据为准，而是重新执行一遍已提交的raft日志
         kvMap = new ConcurrentHashMap<>();
+        MyRaftFileUtil.writeInFile(persistenceFile, JsonUtil.obj2Str(kvMap));
     }
 
     @Override

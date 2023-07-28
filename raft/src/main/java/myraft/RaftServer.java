@@ -1,5 +1,6 @@
 package myraft;
 
+import myraft.api.URLAddress;
 import myraft.api.command.GetCommand;
 import myraft.api.command.SetCommand;
 import myraft.api.model.*;
@@ -13,7 +14,6 @@ import myraft.module.*;
 import myraft.module.api.KVReplicationStateMachine;
 import myraft.module.model.LocalLogEntry;
 import myraft.task.HeartbeatBroadcastTask;
-import myrpc.common.model.URLAddress;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -110,7 +110,7 @@ public class RaftServer implements RaftService {
             }
 
             RaftNodeConfig leaderConfig = this.raftConfig.getRaftNodeConfigList()
-                .stream().filter(item->item.getServerId() == this.currentLeader).findAny().get();
+                .stream().filter(item-> Objects.equals(item.getServerId(), this.currentLeader)).findAny().get();
 
             // 把自己认为的leader告诉客户端
             ClientRequestResult clientRequestResult = new ClientRequestResult();
@@ -142,6 +142,8 @@ public class RaftServer implements RaftService {
 
                 return clientRequestResult;
             }else{
+                logger.info("do client read op, not still be leader");
+
                 // 广播后发现自己不再是leader了，报错，让客户端重新自己找leader (客户端和当前节点同时误判，小概率发生)
                 throw new MyRaftException("do client read op, but not still be leader!" + this.serverId);
             }
