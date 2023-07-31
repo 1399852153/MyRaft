@@ -106,6 +106,8 @@ public class LogModule {
                 this.lastIndex = -1;
             }
         }
+
+        logger.info("logModule init success, lastIndex={}",lastIndex);
     }
 
     public void writeLocalLog(LogEntry LogEntry){
@@ -156,7 +158,7 @@ public class LogModule {
             }
 
             // 写完了这一批日志，刷新currentOffset
-            this.currentOffset = randomAccessFile.getFilePointer();
+            this.currentOffset = offset;
             // 设置最后写入的索引编号，lastIndex
             this.lastIndex = logEntryList.get(logEntryList.size()-1).getLogIndex();
         } catch (IOException e) {
@@ -450,7 +452,12 @@ public class LogModule {
     }
 
     public LogEntry getLastLogEntry(){
-        return readLocalLog(this.lastIndex);
+        LogEntry lastLogEntry = readLocalLog(this.lastIndex);
+        if(lastLogEntry != null){
+            return lastLogEntry;
+        }else {
+            return LogEntry.getEmptyLogEntry();
+        }
     }
 
     // ============================= get/set ========================================
@@ -526,6 +533,7 @@ public class LogModule {
     }
 
     private static void refreshMetadata(File logMetaDataFile,long currentOffset) throws IOException {
+        logger.info("refreshMetadata currentOffset={}",currentOffset);
         try(RandomAccessFile randomAccessFile = new RandomAccessFile(logMetaDataFile,"rw")){
             randomAccessFile.seek(0);
             randomAccessFile.writeLong(currentOffset);

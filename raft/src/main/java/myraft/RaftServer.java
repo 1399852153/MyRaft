@@ -95,7 +95,7 @@ public class RaftServer implements RaftService {
         // leader心跳广播模块
         raftHeartbeatBroadcastModule = new RaftHeartbeatBroadcastModule(this);
         // 状态机模块
-        kvReplicationStateMachine = new SimpleReplicationStateMachine(this.serverId);
+        kvReplicationStateMachine = new SimpleReplicationStateMachine(this);
 
         logger.info("raft server init success! otherNodeInCluster={}, currentServerId={}",otherNodeInCluster,serverId);
     }
@@ -259,9 +259,7 @@ public class RaftServer implements RaftService {
             LogEntry localPrevLogEntry = logModule.readLocalLog(appendEntriesRpcParam.getPrevLogIndex());
             if(localPrevLogEntry == null){
                 // 当前节点日志条目为空，说明完全没有日志(默认任期为-1，这个是约定)
-                localPrevLogEntry = new LogEntry();
-                localPrevLogEntry.setLogIndex(-1);
-                localPrevLogEntry.setLogTerm(-1);
+                localPrevLogEntry = LogEntry.getEmptyLogEntry();
             }
 
             if (localPrevLogEntry.getLogTerm() != appendEntriesRpcParam.getPrevLogTerm()) {

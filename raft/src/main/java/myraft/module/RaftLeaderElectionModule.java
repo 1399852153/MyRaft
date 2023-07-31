@@ -114,7 +114,6 @@ public class RaftLeaderElectionModule {
             logger.info("candidate log at least as new as the current node, valid passed!");
         }
 
-
         // 投票校验通过,刷新元数据
         this.currentServer.refreshRaftServerMetaData(
             new RaftServerMetaData(requestVoteRpcParam.getTerm(),requestVoteRpcParam.getCandidateId()));
