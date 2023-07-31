@@ -370,11 +370,16 @@ public class LogModule {
 
                     int appendLogEntryBatchNum = this.currentServer.getRaftConfig().getAppendLogEntryBatchNum();
 
-                    // 要发送的日志起始值(基于appendLogEntryBatchNum获取需要发送的日志)
-                    long logIndexStart = nextIndex - appendLogEntryBatchNum;
-                    // 读取出[logIndexStart,nextIndex]的日志(左闭右闭区间)
-                    List<LocalLogEntry> LocalLogEntryList = this.readLocalLog(logIndexStart,nextIndex);
-                    List<LogEntry> logEntryList = LocalLogEntryList.stream().map(item-> (LogEntry)item).collect(Collectors.toList());
+                    // 要发送的日志最大index值
+                    // (追进度的时候，就是nextIndex开始批量发送appendLogEntryBatchNum-1条(左闭右闭区间)；如果进度差不多那就是以lastEntry.index为界限全部发送出去)
+                    long logIndexEnd = Math.min(nextIndex+(appendLogEntryBatchNum-1), lastEntry.getLogIndex());
+                    // 读取出[nextIndex,logIndexEnd]的日志(左闭右闭区间)
+                    List<LocalLogEntry> localLogEntryList = this.readLocalLog(nextIndex,logIndexEnd);
+
+                    logger.info("replicationLogEntry doing! nextIndex={},logIndexEnd={},LocalLogEntryList={}",
+                        nextIndex,logIndexEnd,JsonUtil.obj2Str(localLogEntryList));
+
+                    List<LogEntry> logEntryList = localLogEntryList.stream().map(item-> (LogEntry)item).collect(Collectors.toList());
                     if(logEntryList.size() == appendLogEntryBatchNum + 1){
                         // 一般情况能查出appendLogEntryBatchNum+1条日志，第一条(logIndexStart)用于设置prev相关参数
                         LogEntry preLogEntry = logEntryList.get(0);

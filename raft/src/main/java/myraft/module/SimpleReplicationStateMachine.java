@@ -41,7 +41,7 @@ public class SimpleReplicationStateMachine implements KVReplicationStateMachine 
         MyRaftFileUtil.writeInFile(persistenceFile, JsonUtil.obj2Str(kvMap));
 
         List<LocalLogEntry> logEntryList = raftServer.getLogModule().readLocalLog(
-            0,raftServer.getLogModule().getLastIndex());
+            -1,raftServer.getLogModule().getLastIndex());
         List<SetCommand> setCommandList = logEntryList.stream()
             .filter(item->item.getCommand() instanceof SetCommand)
             .map(item->(SetCommand)item.getCommand()).collect(Collectors.toList());

@@ -254,6 +254,7 @@ public class RaftServer implements RaftService {
 
         // logEntries不为空，是真实的日志复制rpc
 
+        logger.info("do real log append! appendEntriesRpcParam={}",appendEntriesRpcParam);
         // AppendEntry可靠性校验，如果prevLogIndex和prevLogTerm不匹配，则需要返回false，让leader发更早的日志过来
         {
             LogEntry localPrevLogEntry = logModule.readLocalLog(appendEntriesRpcParam.getPrevLogIndex());
