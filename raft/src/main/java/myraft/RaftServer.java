@@ -308,6 +308,9 @@ public class RaftServer implements RaftService {
 
             // 全读取出来(读取出来是按照index从小到大排好序的)
             List<LocalLogEntry> logEntryList = logModule.readLocalLog(lastApplied+1,lastCommittedIndex);
+
+            logger.info("pushStatemachineApply.apply, logEntryList={}",logEntryList);
+
             List<SetCommand> setCommandList = logEntryList.stream()
                 .filter(item->item.getCommand() instanceof SetCommand)
                 .map(item->(SetCommand)item.getCommand())

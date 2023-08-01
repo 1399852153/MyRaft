@@ -373,29 +373,39 @@ public class LogModule {
                     // 要发送的日志最大index值
                     // (追进度的时候，就是nextIndex开始批量发送appendLogEntryBatchNum-1条(左闭右闭区间)；如果进度差不多那就是以lastEntry.index为界限全部发送出去)
                     long logIndexEnd = Math.min(nextIndex+(appendLogEntryBatchNum-1), lastEntry.getLogIndex());
-                    // 读取出[nextIndex,logIndexEnd]的日志(左闭右闭区间)
-                    List<LocalLogEntry> localLogEntryList = this.readLocalLog(nextIndex,logIndexEnd);
+                    // 读取出[nextIndex-1,logIndexEnd]的日志(左闭右闭区间),-1往前一位是为了读取出preLog的信息
+                    List<LocalLogEntry> localLogEntryList = this.readLocalLog(nextIndex-1,logIndexEnd);
 
                     logger.info("replicationLogEntry doing! nextIndex={},logIndexEnd={},LocalLogEntryList={}",
                         nextIndex,logIndexEnd,JsonUtil.obj2Str(localLogEntryList));
 
-                    List<LogEntry> logEntryList = localLogEntryList.stream().map(item-> (LogEntry)item).collect(Collectors.toList());
-                    if(logEntryList.size() == appendLogEntryBatchNum + 1){
-                        // 一般情况能查出appendLogEntryBatchNum+1条日志，第一条(logIndexStart)用于设置prev相关参数
-                        LogEntry preLogEntry = logEntryList.get(0);
+                    List<LogEntry> logEntryList = localLogEntryList.stream()
+                        .map(LogEntry::toLogEntry)
+                        .collect(Collectors.toList());
 
-                        appendEntriesRpcParam.setEntries(logEntryList);
+                    // 索引区间大小
+                    long indexRange = (logIndexEnd - nextIndex + 1);
+                    if(logEntryList.size() == indexRange+1){
+                        // 一般情况能查出区间内的所有日志
+
+                        logger.info("find log size match!");
+                        // preLog
+                        LogEntry preLogEntry = logEntryList.get(0);
+                        // 实际需要传输的log
+                        List<LogEntry> needAppendLogList = logEntryList.subList(1,logEntryList.size());
+                        appendEntriesRpcParam.setEntries(needAppendLogList);
                         appendEntriesRpcParam.setPrevLogIndex(preLogEntry.getLogIndex());
                         appendEntriesRpcParam.setPrevLogTerm(preLogEntry.getLogTerm());
-                    }else if(logEntryList.size() > 0 && logEntryList.size() <= appendLogEntryBatchNum){
-                        // 日志长度小于appendLogEntryBatchNum+1，说明最前面的是第一条记录(比如appendLogEntryBatchNum=5，但一共只有3条日志全查出来了)
+                    }else if(logEntryList.size() > 0 && logEntryList.size() <= indexRange){
+                        logger.info("find log size not match!");
+                        // 日志长度小于索引区间值，说明已经查到最前面的日志 (比如appendLogEntryBatchNum=5，但一共只有3条日志全查出来了)
                         appendEntriesRpcParam.setEntries(logEntryList);
 
                         // 约定好第一条记录的prev的index和term都是-1
                         appendEntriesRpcParam.setPrevLogIndex(-1);
                         appendEntriesRpcParam.setPrevLogTerm(-1);
                     } else{
-                        // 正常情况是先持久化然后再广播同步日志，所以肯定有
+                        // 正常情况是先持久化然后再广播同步日志，所以size肯定会大于0，也不应该超过索引区间值
                         // 走到这里不符合预期，日志模块有bug
                         throw new MyRaftException("replicationLogEntry logEntryList size error!" +
                             " nextIndex=" + nextIndex + " logEntryList.size=" + logEntryList.size());
@@ -414,10 +424,10 @@ public class LogModule {
 
                     if(appendEntriesRpcResult.isSuccess()){
                         logger.info("appendEntriesRpcResult is success, node={}",node);
-                        // 同步成功了，nextIndex递增一位
 
                         // If successful: update nextIndex and matchIndex for follower (§5.3)
 
+                        // 同步成功了，nextIndex递增一位
                         this.currentServer.getNextIndexMap().put(node,nextIndex+1);
                         this.currentServer.getMatchIndexMap().put(node,nextIndex);
 

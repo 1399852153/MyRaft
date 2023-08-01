@@ -34,11 +34,11 @@ public class RaftClusterGlobalConfig {
 //        ,new RaftNodeConfig("raft-5","127.0.0.1",8005)
     );
 
-    public static final int electionTimeout = 3;
+    public static final int electionTimeout = 5;
 
     public static final Integer debugElectionTimeout = 0;
 
-    public static final int HeartbeatInterval = 1;
+    public static final int HeartbeatInterval = 3;
 
     /**
      * N次心跳后，leader会自动模拟出现故障(退回follow，停止心跳广播)

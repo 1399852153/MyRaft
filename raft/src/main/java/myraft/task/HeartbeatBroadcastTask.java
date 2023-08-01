@@ -3,6 +3,7 @@ package myraft.task;
 import myraft.RaftServer;
 import myraft.api.model.AppendEntriesRpcParam;
 import myraft.api.model.AppendEntriesRpcResult;
+import myraft.api.model.LogEntry;
 import myraft.api.service.RaftService;
 import myraft.common.enums.ServerStatusEnum;
 import myraft.module.RaftHeartbeatBroadcastModule;
@@ -65,6 +66,12 @@ public class HeartbeatBroadcastTask implements Runnable{
         AppendEntriesRpcParam appendEntriesRpcParam = new AppendEntriesRpcParam();
         appendEntriesRpcParam.setTerm(currentServer.getCurrentTerm());
         appendEntriesRpcParam.setLeaderId(currentServer.getServerId());
+        appendEntriesRpcParam.setEntries(new ArrayList<>());
+
+        LogEntry lastLogEntry = currentServer.getLogModule().getLastLogEntry();
+        appendEntriesRpcParam.setPrevLogTerm(lastLogEntry.getLogTerm());
+        appendEntriesRpcParam.setPrevLogIndex(lastLogEntry.getLogIndex());
+        appendEntriesRpcParam.setLeaderCommit(currentServer.getLogModule().getLastCommittedIndex());
 
         for(RaftService node : otherNodeInCluster){
             Future<AppendEntriesRpcResult> future = currentServer.getRaftHeartbeatBroadcastModule().getRpcThreadPool().submit(

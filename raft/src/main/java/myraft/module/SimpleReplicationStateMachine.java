@@ -37,17 +37,10 @@ public class SimpleReplicationStateMachine implements KVReplicationStateMachine 
         this.persistenceFile = new File(userPath + File.separator + "raftReplicationStateMachine-" + raftServer.getServerId() + ".txt");
         MyRaftFileUtil.createFile(persistenceFile);
 
+        // 状态机启动时不以持久化文件中的数据为准，而是等待leader的心跳执行一遍已提交的raft日志
+        // 所以在这里需要清空
         kvMap = new ConcurrentHashMap<>();
         MyRaftFileUtil.writeInFile(persistenceFile, JsonUtil.obj2Str(kvMap));
-
-        List<LocalLogEntry> logEntryList = raftServer.getLogModule().readLocalLog(
-            -1,raftServer.getLogModule().getLastIndex());
-        List<SetCommand> setCommandList = logEntryList.stream()
-            .filter(item->item.getCommand() instanceof SetCommand)
-            .map(item->(SetCommand)item.getCommand()).collect(Collectors.toList());
-
-        // 状态机启动时不以持久化文件中的数据为准，而是重新执行一遍已提交的raft日志
-        batchApply(setCommandList);
     }
 
     @Override

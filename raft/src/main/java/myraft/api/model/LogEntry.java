@@ -59,6 +59,18 @@ public class LogEntry implements Serializable {
         return logEntry;
     }
 
+    public static LogEntry toLogEntry(LogEntry logEntry){
+        if(logEntry instanceof LocalLogEntry){
+            LogEntry newLog = new LogEntry();
+            newLog.setLogTerm(logEntry.logTerm);
+            newLog.setLogIndex(logEntry.logIndex);
+            newLog.setCommand(logEntry.command);
+            return newLog;
+        }else{
+            return logEntry;
+        }
+    }
+
     @Override
     public String toString() {
         return "LogEntry{" +
