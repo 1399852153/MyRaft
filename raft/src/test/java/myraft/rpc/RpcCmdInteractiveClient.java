@@ -4,6 +4,7 @@ import myraft.RaftClient;
 import myraft.api.command.GetCommand;
 import myraft.api.command.SetCommand;
 import myraft.rpc.config.RaftClusterGlobalConfig;
+import myrpc.exchange.DefaultFuture;
 
 import java.util.Objects;
 import java.util.Scanner;
@@ -19,6 +20,9 @@ import java.util.Scanner;
 public class RpcCmdInteractiveClient {
 
     public static void main(String[] args) {
+        // 客户端的超时时间必须大于raft内部rpc的超时时间，否则在节点故障时rpc会一直超时
+        DefaultFuture.DEFAULT_TIME_OUT = 3000L;
+
         RaftClient raftClient = new RaftClient(RaftClusterGlobalConfig.registry);
         raftClient.init();
         raftClient.setRaftNodeConfigList(RaftClusterGlobalConfig.raftNodeConfigList);
@@ -58,7 +62,7 @@ public class RpcCmdInteractiveClient {
             }
 
             String key = cmdItem[1];
-            String result = raftClient.doRequest(new GetCommand(key));
+            String result = raftClient.doRequestRetry(new GetCommand(key),2);
             System.out.println("processGet result=" + result);
         }catch (Exception e){
             System.out.println("processGet error!");
@@ -76,7 +80,7 @@ public class RpcCmdInteractiveClient {
 
             String key = cmdItem[1];
             String value = cmdItem[2];
-            String result = raftClient.doRequest(new SetCommand(key, value));
+            String result = raftClient.doRequestRetry(new SetCommand(key, value),2);
             System.out.println("processSet success=" + result);
         }catch (Exception e){
             System.out.println("processSetCmd error!");

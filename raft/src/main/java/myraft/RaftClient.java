@@ -49,6 +49,21 @@ public class RaftClient {
         }).collect(Collectors.toList());
     }
 
+    public String doRequestRetry(Command command, int retryTime){
+        RuntimeException ex = new RuntimeException();
+        for(int i=0; i<retryTime; i++){
+            try {
+                return doRequest(command);
+            }catch (Exception e){
+                ex = new RuntimeException(e);
+                System.out.println("doRequestRetry error, retryTime=" + i);
+            }
+        }
+
+        // n次重试后还是没成功
+        throw ex;
+    }
+
     public String doRequest(Command command){
         // 先让负载均衡选择请求任意节点
         ServiceInfo serviceInfo = loadBalance.select(this.serviceInfoList);
