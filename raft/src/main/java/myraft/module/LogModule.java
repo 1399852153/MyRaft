@@ -337,6 +337,8 @@ public class LogModule {
                     randomAccessFile.seek(offset - LONG_SIZE);
                 }
             }
+
+            this.lastIndex = logIndexNeedDelete - 1;
         } catch (IOException e) {
             throw new MyRaftException("logModule deleteLog error!",e);
         } finally {

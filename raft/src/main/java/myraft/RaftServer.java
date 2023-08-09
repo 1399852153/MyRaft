@@ -112,7 +112,7 @@ public class RaftServer implements RaftService {
             RaftNodeConfig leaderConfig = this.raftConfig.getRaftNodeConfigList()
                 .stream().filter(item-> Objects.equals(item.getServerId(), this.currentLeader)).findAny().get();
 
-            // 把自己认为的leader告诉客户端
+            // 把自己认为的leader告诉客户端(也可以改为直接转发请求)
             ClientRequestResult clientRequestResult = new ClientRequestResult();
             clientRequestResult.setLeaderAddress(new URLAddress(leaderConfig.getIp(),leaderConfig.getPort()));
 
