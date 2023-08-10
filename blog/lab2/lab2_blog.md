@@ -456,6 +456,8 @@ public class LogModule {
 ##### 状态机模块SimpleReplicationStateMachine
 * 状态机模块是一个K/V数据模型，本质上就是内存中维护了一个HashMap。状态机的读写操作就是对这个HashMap的读写操作，没有额外的逻辑。
 * 同时为了方便观察状态机中的数据状态，每次进行写操作时都整体刷新这个HashMap中的数据到对应的本地文件中(简单起见暂不考虑同步刷盘的性能问题)。
+* MyRaft是一个极简的K/V数据库，其只支持最基本的get/set命令，因此作用在状态机中的所有指令天然都是幂等的，是可重复执行的。
+#####
 ```java
 /**
  * 指令(取决于实现)
@@ -477,7 +479,6 @@ public class GetCommand implements Command{
    private String key;
 }
 ```
-* MyRaft是一个极简的K/V数据库，其只支持最基本的get/set命令，因此作用在状态机中的所有指令天然都是幂等的，是可重复执行的。
 ```java
 /**
  * 简易复制状态机(持久化到磁盘中的最基础的k/v数据库)
@@ -652,14 +653,12 @@ raft是一个分布式模型，在出现网络分区等情况下，原来是lead
   反过来说，只要大多数的节点都成功完成了日志复制的rpc请求(appendEntries)，则该写操作就是强一致下的写，因此可以将命令安全的提交到状态机中并向客户端返回成功。
 * 线性强一致的读：强一致的读就不能让老leader处理读请求，因为很可能老leader相比实际上合法的新leader缺失了一些最新的写操作，而导致返回过时的数据(破坏了强一致读的语义)。因此对于读指令，业界提出了几种常见的确保强一致读的方案。
 #####
-|                       | 介绍                                                                                                                                                | 优点           | 缺点                           |
-|-----------------------|---------------------------------------------------------------------------------------------------------------------------------------------------|--------------|------------------------------|
-| 1.读写一视同仁              | 读操作也和写操作一样生成raftLog，并且向集群广播。如果广播得到了大多数节点的成功响应则作用到状态机中得到结果                                                                                         | 简单;易理解，易实现   | 相比其它方案，生成了太多不必要的读请求日志，性能极差   |
-| 2.每次读操作前再确认一次leader地位 | 处理读操作前向集群发一个心跳广播，如果发现自己依然是leader则处理读请求                                                                                                            | 简单;容易实现      | 每次读请求都需要广播确认leader地位，性能也不是很好 |
-| 3.周期性续期确认leader地位     | raft的论文中提到，leader选举的超时时间不能太小，否则心跳广播等无法抑制新选举。那么由此可得，当一次心跳广播确认leader地位后，在选举超时时间范围内自己一定还是集群中的合法leader。因此在一次周期心跳确认leader成功后，在选举超时时间范围内，所有的读请求都直接处理即可。 | 在高并发场合下性能会很好 | 实现起来稍显复杂，理解起来也有一定难度          |
-  流行的raft实现都选择了性能最好的方案3，但MyRaft考虑到实现的简单性，选择了方案2来实现强一致的读。
-* 
-#####
+|                       | 介绍                                                                                                                                                | 优点           | 缺点                                    |
+|-----------------------|---------------------------------------------------------------------------------------------------------------------------------------------------|--------------|---------------------------------------|
+| 1.读写一视同仁              | 读操作也和写操作一样生成raftLog，并且向集群广播。如果广播得到了大多数节点的成功响应则作用到状态机中得到结果                                                                                         | 简单;易理解，易实现   | 相比其它方案，生成了太多不必要的读请求日志，性能极差            |
+| 2.每次读操作前再确认一次leader地位 | 处理读操作前向集群发一个心跳广播，如果发现自己依然是leader则处理读请求                                                                                                            | 简单;容易实现      | 每次读请求都需要广播确认leader地位，性能也不是很好          |
+| 3.周期性续期确认leader地位     | raft的论文中提到，leader选举的超时时间不能太小，否则心跳广播等无法抑制新选举。那么由此可得，当一次心跳广播确认leader地位后，在选举超时时间范围内自己一定还是集群中的合法leader。因此在一次周期心跳确认leader成功后，在选举超时时间范围内，所有的读请求都直接处理即可。 | 在高并发场合下性能会很好 | 实现起来稍显复杂，对本地时钟准确性有一定要求(不准就会有可能破坏强一致读) |
+  MyRaft考虑到实现的简单性，选择了方案2来实现强一致的读。
 #####
 ```java
     public ClientRequestResult clientRequest(ClientRequestParam clientRequestParam) {
@@ -762,9 +761,159 @@ raft是一个分布式模型，在出现网络分区等情况下，原来是lead
         }
     }
 ```
+##### leader向集群广播raftLog
+下面详细介绍leader是如何向集群广播raftLog的。
+* raft的leader维护了两个非持久化的数据(Volatile state on leaders)，即在当前leader视角下follower节点同步raftLog的进度。  
+  一个数据是nextIndex，代表leader认为的follower应该接收的下一条log的索引值，leader初始化时乐观的估计设置其为leader当前最后一条日志索引值加1(代表着乐观估计follower和leader的日志进度是完全一致的)。  
+  一个数据是matchIndex，代表leader实际确认的follower已接受到的最后一条raft日志的索引值，leader初始化时悲观的将其初始化为0。  
+  由于follower是一个集合，所以论文中通过nextIndex[],matchIndex[]来描述，而在MyRaft中都用Map结构来维护。
+* leader基于每个follower对应的nextIndex查找出所要发送的日志集合，并行的向所有follower发送appendEntries的rpc请求。
+  当leader与follower进行rpc交互时，可能follower的日志同步进度并不像leader认为的那样乐观，很可能其实际所拥有的日志索引远小于leader最后一条日志的索引(follower侧的逻辑在下一节分析)。   
+  因此follower在这种情况下会返回失败，此时leader会将对应follower的nextIndex往回退(自减1)，循环往复的交互直到leader发送和follower所需的日志相匹配的那条日志(最坏情况下follower一条日志都没有，leader从第一条日志开始同步)
+* 当follower响应成功后，leader将会更新对应follower的nextIndex和matchIndex的值。当超过半数的follower都响应了对应index日志的appendEntries后，leader认为当前日志已经成功的复制到集群中多数的节点中了，则可以安全的将日志提交到状态机中了。
+#####
+```java
+/**
+     * 向集群广播，令follower复制新的日志条目
+     * */
+    public List<AppendEntriesRpcResult> replicationLogEntry(LogEntry lastEntry) {
+        List<RaftService> otherNodeInCluster = currentServer.getOtherNodeInCluster();
 
-##### MyRaft leader向集群广播raftLog
+        List<Future<AppendEntriesRpcResult>> futureList = new ArrayList<>(otherNodeInCluster.size());
 
-## 3. MyRaft日志复制功能验证
+        for(RaftService node : otherNodeInCluster){
+            // 并行发送rpc，要求follower复制日志
+            Future<AppendEntriesRpcResult> future = this.rpcThreadPool.submit(()->{
+                logger.info("replicationLogEntry start!");
 
-## 总结
+                long nextIndex = this.currentServer.getNextIndexMap().get(node);
+
+                AppendEntriesRpcResult finallyResult = null;
+
+                // If last log index ≥ nextIndex for a follower: send AppendEntries RPC with log entries starting at nextIndex
+                while(lastEntry.getLogIndex() >= nextIndex){
+                    AppendEntriesRpcParam appendEntriesRpcParam = new AppendEntriesRpcParam();
+                    appendEntriesRpcParam.setLeaderId(currentServer.getServerId());
+                    appendEntriesRpcParam.setTerm(currentServer.getCurrentTerm());
+                    appendEntriesRpcParam.setLeaderCommit(this.lastCommittedIndex);
+
+                    int appendLogEntryBatchNum = this.currentServer.getRaftConfig().getAppendLogEntryBatchNum();
+
+                    // 要发送的日志最大index值
+                    // (追进度的时候，就是nextIndex开始批量发送appendLogEntryBatchNum-1条(左闭右闭区间)；如果进度差不多那就是以lastEntry.index为界限全部发送出去)
+                    long logIndexEnd = Math.min(nextIndex+(appendLogEntryBatchNum-1), lastEntry.getLogIndex());
+                    // 读取出[nextIndex-1,logIndexEnd]的日志(左闭右闭区间),-1往前一位是为了读取出preLog的信息
+                    List<LocalLogEntry> localLogEntryList = this.readLocalLog(nextIndex-1,logIndexEnd);
+
+                    logger.info("replicationLogEntry doing! nextIndex={},logIndexEnd={},LocalLogEntryList={}",
+                        nextIndex,logIndexEnd,JsonUtil.obj2Str(localLogEntryList));
+
+                    List<LogEntry> logEntryList = localLogEntryList.stream()
+                        .map(LogEntry::toLogEntry)
+                        .collect(Collectors.toList());
+
+                    // 索引区间大小
+                    long indexRange = (logIndexEnd - nextIndex + 1);
+                    if(logEntryList.size() == indexRange+1){
+                        // 一般情况能查出区间内的所有日志
+
+                        logger.info("find log size match!");
+                        // preLog
+                        LogEntry preLogEntry = logEntryList.get(0);
+                        // 实际需要传输的log
+                        List<LogEntry> needAppendLogList = logEntryList.subList(1,logEntryList.size());
+                        appendEntriesRpcParam.setEntries(needAppendLogList);
+                        appendEntriesRpcParam.setPrevLogIndex(preLogEntry.getLogIndex());
+                        appendEntriesRpcParam.setPrevLogTerm(preLogEntry.getLogTerm());
+                    }else if(logEntryList.size() > 0 && logEntryList.size() <= indexRange){
+                        logger.info("find log size not match!");
+                        // 日志长度小于索引区间值，说明已经查到最前面的日志 (比如appendLogEntryBatchNum=5，但一共只有3条日志全查出来了)
+                        appendEntriesRpcParam.setEntries(logEntryList);
+
+                        // 约定好第一条记录的prev的index和term都是-1
+                        appendEntriesRpcParam.setPrevLogIndex(-1);
+                        appendEntriesRpcParam.setPrevLogTerm(-1);
+                    } else{
+                        // 正常情况是先持久化然后再广播同步日志，所以size肯定会大于0，也不应该超过索引区间值
+                        // 走到这里不符合预期，日志模块有bug
+                        throw new MyRaftException("replicationLogEntry logEntryList size error!" +
+                            " nextIndex=" + nextIndex + " logEntryList.size=" + logEntryList.size());
+                    }
+
+                    logger.info("leader do appendEntries start, node={}, appendEntriesRpcParam={}",node,appendEntriesRpcParam);
+                    AppendEntriesRpcResult appendEntriesRpcResult = node.appendEntries(appendEntriesRpcParam);
+                    logger.info("leader do appendEntries end, node={}, appendEntriesRpcResult={}",node,appendEntriesRpcResult);
+
+                    finallyResult = appendEntriesRpcResult;
+                    // 收到更高任期的处理
+                    boolean beFollower = currentServer.processCommunicationHigherTerm(appendEntriesRpcResult.getTerm());
+                    if(beFollower){
+                        return appendEntriesRpcResult;
+                    }
+
+                    if(appendEntriesRpcResult.isSuccess()){
+                        logger.info("appendEntriesRpcResult is success, node={}",node);
+
+                        // If successful: update nextIndex and matchIndex for follower (§5.3)
+
+                        // 同步成功了，nextIndex递增一位
+                        this.currentServer.getNextIndexMap().put(node,nextIndex+1);
+                        this.currentServer.getMatchIndexMap().put(node,nextIndex);
+
+                        nextIndex++;
+                    }else{
+                        // 因为日志对不上导致一致性检查没通过，同步没成功，nextIndex往后退一位
+
+                        logger.info("appendEntriesRpcResult is false, node={}",node);
+
+                        // If AppendEntries fails because of log inconsistency: decrement nextIndex and retry (§5.3)
+                        nextIndex--;
+                        this.currentServer.getNextIndexMap().put(node,nextIndex);
+                    }
+                }
+
+                if(finallyResult == null){
+                    // 说明有bug
+                    throw new MyRaftException("replicationLogEntry finallyResult is null!");
+                }
+
+                logger.info("finallyResult={},node={}",node,finallyResult);
+
+                return finallyResult;
+            });
+
+            futureList.add(future);
+        }
+
+        // 获得结果
+        List<AppendEntriesRpcResult> appendEntriesRpcResultList = CommonUtil.concurrentGetRpcFutureResult(
+                "do appendEntries", futureList,
+                this.rpcThreadPool,2, TimeUnit.SECONDS);
+
+        logger.info("leader replicationLogEntry appendEntriesRpcResultList={}",appendEntriesRpcResultList);
+
+        return appendEntriesRpcResultList;
+    }
+```
+##### follower处理appendEntries请求
+
+##### leader选举时requestVote校验
+
+## 3. 日志复制过程中异常情况分析
+todo raft日志复制流程图
+##### 
+1. client请求leader时，leader恰好宕机
+2. leader接受了client的请求，将raftLog落盘后宕机
+3. leader将raftLog落盘后，将日志广播给follower时，follower处理成功的数量未超过半数，leader宕机(没来得及删除本地未提交的raftLog)
+5. leader将raftLog落盘后，将日志广播给follower时，follower处理成功的数量超过半数，leader提交命令到状态机前宕机
+6. leader提交命令到状态机后，响应client前宕机
+
+## 4. MyRaft日志复制功能验证
+##### 命令行交互式客户端介绍
+RpcCmdInteractiveClient 
+todo 附操作截图
+##### 验证case
+1. 启动所有节点，进行一系列的读写操作。检查每个节点中日志/状态机中的数据是否符合预期
+2. 将某一个节点关闭，删除掉它状态机对应的文件(相当于清空了状态机)，重新启动后leader的心跳会触发全量日志再一次作用到状态机中。检查状态机的数据是否符合预期
+3. 将某一个节点关闭，继续进行一系列的读写操作。然后将节点恢复，在进行新的写操作后，leader会将宕机时丢失的那部分日志同步到该节点，并且日志是否成功的提交到状态机中执行。检查日志/状态机的数据是否符合预期
+## 5. 总结
