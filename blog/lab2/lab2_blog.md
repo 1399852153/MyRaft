@@ -21,7 +21,7 @@
 为了实现日志复制功能，lab2版本的MyRaft比起lab1额外新增了3个模块，分别是日志模块LogModule、状态机模块SimpleReplicationStateMachine和客户端模块RaftClient。  
 ##### 日志模块LogModule
 * MyRaft的日志模块用于维护raft日志相关的逻辑，出于减少依赖的原因，MyRaft没有去依赖rocksDb等基于本地磁盘的数据库而是直接操作最原始的日志文件(RandomAccessFile)来实现日志存储功能。  
-* 同时简单起见，不过多考虑性能直接通过一把全局的读写锁来防止并发问题。
+* 简单起见，LogModule直接通过一把全局的读写锁来防止并发问题。
 ```java
 /**
  * raft日志条目
@@ -896,8 +896,140 @@ raft是一个分布式模型，在出现网络分区等情况下，原来是lead
     }
 ```
 ##### follower处理appendEntries请求
+* 相比lab1，lab2版本的appendEntries除了之前已有的针对leader任期相关的校验和处理逻辑外，还新增了日志复制相关的逻辑。  
+* raftLog是顺序保存的，为了日志复制的安全性，raft的follower节点也必须和leader保持一致，将日志按照index索引值以从小到大的顺序存在本地的raft日志文件中。  
+  因此只有在已有第0-第N条日志的情况下，follower才能够安全的将第N+1条日志追加到本地日志文件中。为此raft作者设计了一系列的校验规则来保证这一点。
+* 首先，leader在发起appendEntries命令follower复制第N条(logIndex=N)日志时，会将第前一条日志(N-1)的term值(prevLogTerm)和index值(prevLogIndex)作为参数一并传递，follower会对这两个值进行校验以决定是否能安全的复制日志。    
+  follower会查询出对应索引为prevLogIndex的日志，如果没查出来说明进度没跟上leader那自然要返回复制失败，让leader重试把logIndex更小、更前面的日志发过来。  
+  如果查出来了对应的日志则还需要进一步对比请求参数中的prevLogTerm和follower本地对应日志的term值是否一致，如果一致则校验通过；如果不一致则说明follower保存了一个和leader不一致且未最终提交的日志，也要返回失败，让leader把更前面的日志发过来(具体原理后面会分析)。  
+* 当follower这边对于prevLogTerm和prevLogIndex的校验都通过了后，说明leader此时已经找到了follower恰好需要的日志(日志同步的进度匹配上了)，则follower需要将发送过来的日志写入本地日志文件中。  
+  如果leader发过来的日志里对应index的本地日志不存在则直接追加到follower本地日志文件中即可；如果之前已存在则覆盖掉原来的日志即可。  
+* 当一开始follower没有追上leader的日志进度时(比如follower宕机了一段时间再回到集群)，follower会一直返回同步失败，leader则会一直向前找直到找到follower所恰好需要的那条日志。在这之后的日志同步就会十分顺利了，直到follower和leader的日志完全一致。  
+* 考虑到follower可能和leader的日志进度相差过大，一次回退一个索引值的匹配策略效率并不高。论文中提到一种可行的优化是让follower直接把自己的最后一个日志，或者倒数第N个日志的信息(term和index)返回给leader，leader就能够很快的从正确的日志位点开始同步。  
+  但这样会增加程序的复杂度并降低正常情况下进度一致时日志同步的效率，论文的作者认为出现这一问题的概率很低因此该优化是不必要的，简单起见MyRaft也没有做相关的优化。
+* follower在成功将日志落盘后，根据请求参数中的leaderCommit值和自己本地的lastCommittedIndex(最大已提交日志索引号)来判断是否应该将本地的raftLog提交到状态机中执行。  
+  如果参数leaderCommit大于本地的lastCommittedIndex，说明leader已经把一些日志提交到状态机中了，而follower还没有。那么follower需要跟上leader的进度(不但日志进度要匹配，状态机进度也要匹配)。  
+  需要提交到状态机中日志最大的index值为leaderCommit和当前最新一条日志的index最小值(index of last new entry)，如果leaderCommit是最小值，说明follower已经赶上了leader，leader提交的日志follower本地都有。  
+  而如果index of last new entry是更小的，说明当前follower还没有追上leader提交到状态机的进度，把当前已有的所有本地日志都提交到状态机中即可(pushStatemachineApply方法)。
+##### 为什么follower除了校验prevIndex还需要校验prevTerm?
+论文中的5.3节重点解释了一下原因。  
+1. 举个例子，一个5节点的集群，节点编号分别是abcde。在任期1中a是leader，尝试向集群复制一个日志(index=1，term=1，set k1=v1)，但是复制时失败了，只有节点b成功的复制了该日志，而cde都没有持有日志。  
+2. 恰好这时leader a宕机了，触发新选举后节点c成为了新的leader(任期term=2)。c接受到客户端请求，也尝试向集群复制一个日志(index=1，term=2, set k1=v2)，这个时候节点b有一个index=1，这个时候节点b必须让新的日志覆盖掉老的日志才能和leader保持一致。  
+3. c的这次日志复制成功了，bcde四个节点都持有了该日志，则raft集群便可以将这个日志提交到状态机中了，最后集群的所有状态机中k1的值将会是v2，而不是之前复制失败而未提交的v1。
+![whyJudgePrevTerm.png](whyJudgePrevTerm.png)
+#####
+```java
+    public AppendEntriesRpcResult appendEntries(AppendEntriesRpcParam appendEntriesRpcParam) {
+        if(appendEntriesRpcParam.getTerm() < this.raftServerMetaDataPersistentModule.getCurrentTerm()){
+            // Reply false if term < currentTerm (§5.1)
+            // 拒绝处理任期低于自己的老leader的请求
 
-##### leader选举时requestVote校验
+            logger.info("doAppendEntries term < currentTerm");
+            return new AppendEntriesRpcResult(this.raftServerMetaDataPersistentModule.getCurrentTerm(),false);
+        }
+
+        if(appendEntriesRpcParam.getTerm() >= this.raftServerMetaDataPersistentModule.getCurrentTerm()){
+            // appendEntries请求中任期值如果大于自己，说明已经有一个更新的leader了，自己转为follower，并且以对方更大的任期为准
+            this.serverStatusEnum = ServerStatusEnum.FOLLOWER;
+            this.currentLeader = appendEntriesRpcParam.getLeaderId();
+            this.raftServerMetaDataPersistentModule.setCurrentTerm(appendEntriesRpcParam.getTerm());
+        }
+
+        if(appendEntriesRpcParam.getEntries() == null || appendEntriesRpcParam.getEntries().isEmpty()){
+            // 来自leader的心跳处理，清理掉之前选举的votedFor
+            this.cleanVotedFor();
+            // entries为空，说明是心跳请求，刷新一下最近收到心跳的时间
+            raftLeaderElectionModule.refreshLastHeartbeatTime();
+
+            long currentLastCommittedIndex = logModule.getLastCommittedIndex();
+            logger.debug("doAppendEntries heartbeat leaderCommit={},currentLastCommittedIndex={}",
+                appendEntriesRpcParam.getLeaderCommit(),currentLastCommittedIndex);
+
+            if(appendEntriesRpcParam.getLeaderCommit() > currentLastCommittedIndex) {
+                // 心跳处理里，如果leader当前已提交的日志进度超过了当前节点的进度，令当前节点状态机也跟上
+                // 如果leaderCommit >= logModule.getLastIndex(),说明当前节点的日志进度不足，但可以把目前已有的日志都提交给状态机去执行
+                // 如果leaderCommit < logModule.getLastIndex(),说明当前节点进度比较快，有一些日志是leader已复制但还没提交的，把leader已提交的那一部分作用到状态机就行
+                long minNeedCommittedIndex = Math.min(appendEntriesRpcParam.getLeaderCommit(), logModule.getLastIndex());
+                pushStatemachineApply(minNeedCommittedIndex);
+            }
+
+            // 心跳请求，直接返回
+            return new AppendEntriesRpcResult(this.raftServerMetaDataPersistentModule.getCurrentTerm(),true);
+        }
+
+        // logEntries不为空，是真实的日志复制rpc
+
+        logger.info("do real log append! appendEntriesRpcParam={}",appendEntriesRpcParam);
+        // AppendEntry可靠性校验，如果prevLogIndex和prevLogTerm不匹配，则需要返回false，让leader发更早的日志过来
+        {
+            LogEntry localPrevLogEntry = logModule.readLocalLog(appendEntriesRpcParam.getPrevLogIndex());
+            if(localPrevLogEntry == null){
+                // 当前节点日志条目为空，说明完全没有日志(默认任期为-1，这个是约定)
+                localPrevLogEntry = LogEntry.getEmptyLogEntry();
+            }
+
+            if (localPrevLogEntry.getLogTerm() != appendEntriesRpcParam.getPrevLogTerm()) {
+                //  Reply false if log doesn’t contain an entry at prevLogIndex
+                //  whose term matches prevLogTerm (§5.3)
+                //  本地日志和参数中的PrevLogIndex和PrevLogTerm对不上(对应日志不存在，或者任期对不上)
+                logger.info("doAppendEntries localPrevLogEntry not match, localLogEntry={}",localPrevLogEntry);
+
+                return new AppendEntriesRpcResult(this.raftServerMetaDataPersistentModule.getCurrentTerm(),false);
+            }
+        }
+
+        // 走到这里说明找到了最新的一条匹配的记录
+        logger.info("doAppendEntries localEntry is match");
+
+        List<LogEntry> newLogEntryList = appendEntriesRpcParam.getEntries();
+
+        // 1. Append any new entries not already in the log
+        // 2. If an existing entry conflicts with a new one (same index but different terms),
+        //    delete the existing entry and all that follow it (§5.3)
+        // 新日志的复制操作（直接整个覆盖掉prevLogIndex之后的所有日志,以leader发过来的日志为准）
+        logModule.writeLocalLog(newLogEntryList, appendEntriesRpcParam.getPrevLogIndex());
+
+        // If leaderCommit > commitIndex, set commitIndex = min(leaderCommit, index of last new entry)
+        if(appendEntriesRpcParam.getLeaderCommit() > logModule.getLastCommittedIndex()){
+            // 如果leaderCommit更大，说明当前节点的同步进度慢于leader，以新的entry里的index为准(更高的index还没有在本地保存(因为上面的appendEntry有效性检查))
+            // 如果index of last new entry更大，说明当前节点的同步进度是和leader相匹配的，commitIndex以leader最新提交的为准
+
+            LogEntry lastNewEntry = newLogEntryList.get(newLogEntryList.size()-1);
+            long lastCommittedIndex = Math.min(appendEntriesRpcParam.getLeaderCommit(), lastNewEntry.getLogIndex());
+            pushStatemachineApply(lastCommittedIndex);
+        }
+
+        // 返回成功
+        return new AppendEntriesRpcResult(this.raftServerMetaDataPersistentModule.getCurrentTerm(), true);
+    }
+
+    private void pushStatemachineApply(long lastCommittedIndex){
+        long lastApplied = logModule.getLastApplied();
+
+        // If commitIndex > lastApplied: increment lastApplied, apply log[lastApplied] to state machine (§5.3)
+        if(lastApplied < lastCommittedIndex){
+            // 作用在状态机上的日志编号低于集群中已提交的日志编号，需要把这些已提交的日志都作用到状态机上去
+            logger.info("pushStatemachineApply.apply, lastApplied={},lastCommittedIndex={}",lastApplied,lastCommittedIndex);
+
+            // 全读取出来(读取出来是按照index从小到大排好序的)
+            List<LocalLogEntry> logEntryList = logModule.readLocalLog(lastApplied+1,lastCommittedIndex);
+
+            logger.info("pushStatemachineApply.apply, logEntryList={}",logEntryList);
+
+            List<SetCommand> setCommandList = logEntryList.stream()
+                .filter(item->item.getCommand() instanceof SetCommand)
+                .map(item->(SetCommand)item.getCommand())
+                .collect(Collectors.toList());
+
+            // 按照顺序依次作用到状态机中
+            this.kvReplicationStateMachine.batchApply(setCommandList);
+        }
+
+        this.logModule.setLastCommittedIndex(lastCommittedIndex);
+        this.logModule.setLastApplied(lastCommittedIndex);
+    }
+```
+##### leader选举时requestVote的安全性校验
 
 ## 3. 日志复制过程中异常情况分析
 todo raft日志复制流程图
