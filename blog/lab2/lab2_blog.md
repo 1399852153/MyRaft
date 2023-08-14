@@ -13,8 +13,8 @@
 5. 至此，一次完整的日志复制过程完成，一切正常的情况下整个集群中所有节点的本地日志中都包含了对应请求的日志，每个节点的状态机也执行了对应日志包含的状态机指令。
 #####
 * 上面关于raft日志复制功能的介绍看起来不算复杂，在一切正常的情况下系统似乎能很好的完成任务。但raft是一个分布式系统，分布式系统中会出现各种麻烦的异常情况，在上述任务的每一步、任一瞬间都可能出现网络故障、机器宕机(leader/follower都可能处理到一半就宕机)等问题，
-而如何在异常情况下依然能让系统正常完成任务就使得逻辑变得复杂起来了。  
-* raft论文中对一些异常情况进行了简要的介绍，并通过一些示例来证明算法的正确性。但具体落地到代码实现中还有更多的细节需要考虑，这也是为什么raft论文中反复强调算法易理解的重要性。
+而如何在异常情况下依然能让系统正常完成任务就使得raft日志复制的逻辑变得复杂起来了。  
+* raft论文中对一些异常情况进行了简要介绍，并通过一些示例来证明算法的正确性。但具体落地到代码实现中还有更多的细节需要考虑，这也是为什么raft论文中反复强调算法易理解的重要性。
 * 因为算法容易理解，实现者就能对算法建立起直观的理解，处理异常case时就能更好的理解应该如何做以及为什么这样做是正确的。在下文中将会结合MyRaft的实现源码来详细分析raft是如何处理异常情况的。
 ## 2. MyRaft日志复制
 ### 2.1 MyRaft日志复制相关模块简介
@@ -912,7 +912,7 @@ raft是一个分布式模型，在出现网络分区等情况下，原来是lead
   需要提交到状态机中日志最大的index值为leaderCommit和当前最新一条日志的index最小值(index of last new entry)，如果leaderCommit是最小值，说明follower已经赶上了leader，leader提交的日志follower本地都有。  
   而如果index of last new entry是更小的，说明当前follower还没有追上leader提交到状态机的进度，把当前已有的所有本地日志都提交到状态机中即可(pushStatemachineApply方法)。
 ##### 为什么follower除了校验prevIndex还需要校验prevTerm?
-论文中的5.3节重点解释了一下原因。  
+raft论文在第5.3节重点解释了一下原因，。 
 1. 举个例子，一个5节点的集群，节点编号分别是abcde。在任期1中a是leader，尝试向集群复制一个日志(index=1，term=1，set k1=v1)，但是复制时失败了，只有节点b成功的复制了该日志，而cde都没有持有日志。  
 2. 恰好这时leader a宕机了，触发新选举后节点c成为了新的leader(任期term=2)。c接受到客户端请求，也尝试向集群复制一个日志(index=1，term=2, set k1=v2)，这个时候节点b有一个index=1，这个时候节点b必须让新的日志覆盖掉老的日志才能和leader保持一致。  
 3. c的这次日志复制成功了，bcde四个节点都持有了该日志，则raft集群便可以将这个日志提交到状态机中了，最后集群的所有状态机中k1的值将会是v2，而不是之前复制失败而未提交的v1。
@@ -1030,7 +1030,83 @@ raft是一个分布式模型，在出现网络分区等情况下，原来是lead
     }
 ```
 ##### leader选举时requestVote的安全性校验
+* 前面的例子里提到在老leader宕机触发选举后，新的leader是可能把一些不一致的日志给覆盖清除掉以保证日志一致性。  
+  当leader广播日志并在半数以上follower成功复制后，并提交raftLog到状态机中后如果leader突然宕机了，raft是如何保证新的leader不会清理掉已提交到状态机中的日志的呢？
+* raft的论文在5.4节安全性一节中提到了这一点，raft作者通过在leader选举过程中follower投票的环节中添加对双方日志的校验来保证已提交到状态机的日志绝对不会被覆盖。  
+  raft论文中保证安全性的核心思路共两点：一是candidate必须和超过半数的follower进行通信并得到选票；二是candidate的日志至少要和follower一样新(即follower有的日志candidate必须本地也有，反之则不需要成立)。  
+  基于这两点后能以此推导：已提交的日志一定在集群中超过半数的节点中存在 + 新当选的leader所包含的日志一定比集群中超过半数的节点更全面(至少一样全面) => 新的leader一定包含所有已提交的日志(只有包含所有已提交日志的节点才能被选为leader)
+* 那raft是如何在选举投票时令follower和candidate进行日志完整程度比对的呢？raft论文的5.4节中也提到了，具体规则如下：  
+  Raft通过比较两个节点中日志中最后一个条目的索引和任期来决定谁是最新的。  
+  1. 如果两个日志中最后的条目有着不同的任期，则任期较后的日志是更新的。  
+  2. 如果两个日志中最后的条目有着相同的任期，则较长的(注：索引值更大的)那个日志是更新的。  
+* candidate的requestVote的请求中会带上candidate自己最后一条日志的任期(lastLogTerm)和索引值(lastLogIndex),而处理请求的follower也需要查询出自己本地的最后一条日志出来，并基于上述规则比较到底是哪边的日志更新，更全面。   
+  只有当candidate的日志完整程度大于(更新)或等于(一样新)follower本地的日志时，follower才能将选票给到candidate。
+* 有了在选举逻辑中关于日志的完整性的校验，raft的日志复制功能就算基本完成了。而为什么这样的设计能保证日志复制的安全性，不会造成节点间数据的不一致，在raft的论文中有提到，在这里就不再赘述了。  
+  raft论文中给出的关于日志复制正确性的结论并不是那么显然(因为有不少异常的case需要琢磨)，希望读者能通过仔细推敲论文并自己动手实现raft来加深理解。 
+#####
+在上一小节的例子中，假设任期1中的a成功的复制了日志，并且在b、c节点上复制成功，而d、e上没有复制成功。那么如果a在提交日志到状态机后宕机，则只有b、c才可能被选举为leader，因为b、c会拒绝来自d、e的requestVote(b、c的日志比d、e的新)而令其无法获得半数以上的选票，而反过来d、e则会同意投票给b、c。
+#####
+```java
+ /**
+     * 处理投票请求
+     * 注意：synchronized修饰防止不同candidate并发的投票申请处理，以FIFO的方式处理
+     * */
+    public synchronized RequestVoteRpcResult requestVoteProcess(RequestVoteRpcParam requestVoteRpcParam){
+        if(this.currentServer.getCurrentTerm() > requestVoteRpcParam.getTerm()){
+            // Reply false if term < currentTerm (§5.1)
+            // 发起投票的candidate任期小于当前服务器任期，拒绝投票给它
+            logger.info("reject requestVoteProcess! term < currentTerm, currentServerId={}",currentServer.getServerId());
+            return new RequestVoteRpcResult(this.currentServer.getCurrentTerm(),false);
+        }
 
+        // 发起投票的节点任期高于当前节点，无条件投票给它(任期高的说了算)
+        if(this.currentServer.getCurrentTerm() < requestVoteRpcParam.getTerm()){
+            // 刷新元数据
+            this.currentServer.refreshRaftServerMetaData(
+                new RaftServerMetaData(requestVoteRpcParam.getTerm(),requestVoteRpcParam.getCandidateId()));
+            // 任期没它高，自己转为follower
+            this.currentServer.setServerStatusEnum(ServerStatusEnum.FOLLOWER);
+            return new RequestVoteRpcResult(this.currentServer.getCurrentTerm(),true);
+        }
+
+        // term任期值相同，需要避免同一任期内投票给不同的节点而脑裂
+        if(this.currentServer.getVotedFor() != null && !this.currentServer.getVotedFor().equals(requestVoteRpcParam.getCandidateId())){
+            // If votedFor is null or candidateId（取反的卫语句）
+            // 当前服务器已经把票投给了别人,拒绝投票给发起投票的candidate
+            logger.info("reject requestVoteProcess! votedFor={},currentServerId={}",
+                currentServer.getVotedFor(),currentServer.getServerId());
+            return new RequestVoteRpcResult(this.currentServer.getCurrentTerm(),false);
+        }
+
+        // 考虑日志条目索引以及任期值是否满足条件的情况（第5.4节中提到的安全性）
+        // 保证leader必须拥有所有已提交的日志，即发起投票的candidate日志一定要比投票给它的节点更新
+        LogEntry lastLogEntry = currentServer.getLogModule().getLastLogEntry();
+        logger.info("requestVoteProcess lastLogEntry={}",lastLogEntry);
+        if(lastLogEntry.getLogTerm() > requestVoteRpcParam.getLastLogTerm()){
+            // If the logs have last entries with different terms, then the log with the later term is more up-to-date.
+            // 当前节点的last日志任期比发起投票的candidate更高(比candidate更新)，不投票给它
+            logger.info("lastLogEntry.term > candidate.lastLogTerm! voteGranted=false");
+            return new RequestVoteRpcResult(this.currentServer.getCurrentTerm(),false);
+        }else if(lastLogEntry.getLogTerm() == requestVoteRpcParam.getLastLogTerm() &&
+            lastLogEntry.getLogIndex() > requestVoteRpcParam.getLastLogIndex()){
+            // If the logs end with the same term, then whichever log is longer is more up-to-date.
+            // 当前节点的last日志和发起投票的candidate任期一样，但是index比candidate的高(比candidate更新)，不投票给它
+
+            logger.info("lastLogEntry.term == candidate.lastLogTerm && " +
+                "lastLogEntry.index > candidate.lastLogIndex! voteGranted=false");
+            return new RequestVoteRpcResult(this.currentServer.getCurrentTerm(),false);
+        }else{
+            // candidate的日志至少与当前节点一样新(或者更新)，通过检查，可以投票给它
+            logger.info("candidate log at least as new as the current node, valid passed!");
+        }
+
+        // 投票校验通过,刷新元数据
+        this.currentServer.refreshRaftServerMetaData(
+            new RaftServerMetaData(requestVoteRpcParam.getTerm(),requestVoteRpcParam.getCandidateId()));
+        this.currentServer.processCommunicationHigherTerm(requestVoteRpcParam.getTerm());
+        return new RequestVoteRpcResult(this.currentServer.getCurrentTerm(),true);
+    }
+```
 ## 3. 日志复制过程中异常情况分析
 todo raft日志复制流程图
 ##### 
