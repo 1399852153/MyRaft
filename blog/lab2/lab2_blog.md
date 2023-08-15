@@ -45,414 +45,7 @@ public class LogEntry implements Serializable {
 }
 ```
 todo LogEntry在磁盘文件中存储的示意图
-```java
-public class LogModule {
-
-    private static final Logger logger = LoggerFactory.getLogger(LogModule.class);
-
-    private static final int LONG_SIZE = 8;
-
-    private final File logFile;
-    private final File logMetaDataFile;
-
-    /**
-     * 每条记录后面都带上当时的currentOffset，用于找到对应记录（currentOffset用于持久化）
-     * */
-    private volatile long currentOffset;
-
-    /**
-     * 已写入的当前日志索引号
-     * */
-    private volatile long lastIndex;
-
-    /**
-     * 已提交的最大日志索引号（论文中的commitIndex）
-     * rpc复制到多数节点上，日志就认为是已提交
-     * */
-    private volatile long lastCommittedIndex = -1;
-
-    /**
-     * 作用到状态机上，日志就认为是已应用
-     * */
-    private volatile long lastApplied = -1;
-
-    private final ExecutorService rpcThreadPool;
-
-    private final RaftServer currentServer;
-
-    private final ReentrantReadWriteLock reentrantLock = new ReentrantReadWriteLock();
-    private final ReentrantReadWriteLock.WriteLock writeLock = reentrantLock.writeLock();
-    private final ReentrantReadWriteLock.ReadLock readLock = reentrantLock.readLock();
-
-    private static final String logFileName = "raftLog.txt";
-    private static final String logMetaDataFileName = "raftLogMeta.txt";
-
-    public LogModule(RaftServer currentServer) throws IOException {
-        this.currentServer = currentServer;
-
-        int threadPoolSize = Math.max(currentServer.getOtherNodeInCluster().size(),1) * 2;
-        this.rpcThreadPool = new ThreadPoolExecutor(threadPoolSize, threadPoolSize * 2,
-            0L, TimeUnit.MILLISECONDS, new SynchronousQueue<>());
-
-        String logFileDir = getLogFileDir();
-
-        this.logMetaDataFile = new File(logFileDir + File.separator + logMetaDataFileName);
-        MyRaftFileUtil.createFile(logMetaDataFile);
-
-        this.logFile = new File(logFileDir + File.separator + logFileName);
-        MyRaftFileUtil.createFile(logFile);
-
-        try(RandomAccessFile randomAccessLogMetaDataFile = new RandomAccessFile(logMetaDataFile, "r")) {
-            if (randomAccessLogMetaDataFile.length() >= LONG_SIZE) {
-                this.currentOffset = randomAccessLogMetaDataFile.readLong();
-            } else {
-                this.currentOffset = 0;
-            }
-        }
-
-        try(RandomAccessFile randomAccessLogFile = new RandomAccessFile(logFile,"r")) {
-            // 尝试读取之前已有的日志文件，找到最后一条日志的index
-            if (this.currentOffset >= LONG_SIZE) {
-                // 跳转到最后一个记录的offset处
-                randomAccessLogFile.seek(this.currentOffset - LONG_SIZE);
-
-                // 获得记录的offset
-                long entryOffset = randomAccessLogFile.readLong();
-                // 跳转至对应位置
-                randomAccessLogFile.seek(entryOffset);
-
-                this.lastIndex = randomAccessLogFile.readLong();
-            }else{
-                // 没有历史的日志
-                this.lastIndex = -1;
-            }
-        }
-
-        logger.info("logModule init success, lastIndex={}",lastIndex);
-    }
-
-    public void writeLocalLog(LogEntry LogEntry){
-        writeLocalLog(Collections.singletonList(LogEntry),this.lastIndex);
-    }
-
-    public void writeLocalLog(List<LogEntry> logEntryList){
-        writeLocalLog(logEntryList,this.lastIndex);
-    }
-
-    /**
-     * 在logIndex后覆盖写入日志
-     * */
-    public void writeLocalLog(List<LogEntry> logEntryList, long logIndex){
-        if(logEntryList.isEmpty()){
-            return;
-        }
-
-        boolean lockSuccess = writeLock.tryLock();
-        if(!lockSuccess){
-            logger.error("writeLocalLog lock error!");
-            return;
-        }
-
-        // 找到标记点
-        LocalLogEntry localLogEntry = readLocalLog(logIndex);
-        if(localLogEntry == null){
-            localLogEntry = LocalLogEntry.getEmptyLogEntry();
-        }
-
-        long offset = localLogEntry.getEndOffset();
-
-        try(RandomAccessFile randomAccessFile = new RandomAccessFile(logFile,"rw")){
-
-            for(LogEntry logEntryItem : logEntryList){
-                // 在offset指定的位置后面追加写入
-                randomAccessFile.seek(offset);
-
-                writeLog(randomAccessFile,logEntryItem);
-
-                randomAccessFile.writeLong(offset);
-
-                // 更新偏移量
-                offset = randomAccessFile.getFilePointer();
-
-                // 持久化currentOffset的值，二阶段提交修改currentOffset的值，宕机恢复时以持久化的值为准
-                refreshMetadata(this.logMetaDataFile,offset);
-            }
-
-            // 写完了这一批日志，刷新currentOffset
-            this.currentOffset = offset;
-            // 设置最后写入的索引编号，lastIndex
-            this.lastIndex = logEntryList.get(logEntryList.size()-1).getLogIndex();
-        } catch (IOException e) {
-            throw new MyRaftException("logModule writeLog error!",e);
-        } finally {
-            writeLock.unlock();
-        }
-    }
-
-    private static void writeLog(RandomAccessFile randomAccessFile, LogEntry logEntry) throws IOException {
-        randomAccessFile.writeLong(logEntry.getLogIndex());
-        randomAccessFile.writeInt(logEntry.getLogTerm());
-
-        byte[] commandBytes = JsonUtil.obj2Str(logEntry.getCommand()).getBytes(StandardCharsets.UTF_8);
-        randomAccessFile.writeInt(commandBytes.length);
-        randomAccessFile.write(commandBytes);
-    }
-
-    /**
-     * 根据日志索引号，获得对应的日志记录
-     * */
-    public LocalLogEntry readLocalLog(long logIndex) {
-        readLock.lock();
-
-        try {
-            List<LocalLogEntry> logEntryList = readLocalLogNoSort(logIndex, logIndex);
-            if (logEntryList.isEmpty()) {
-                return null;
-            } else {
-                // 只会有1个
-                return logEntryList.get(0);
-            }
-        }finally {
-            readLock.unlock();
-        }
-    }
-
-    /**
-     * 根据日志索引号，获得对应的日志记录
-     * 左右闭区间（logIndexStart <= {index} <= logIndexEnd）
-     * */
-    public List<LocalLogEntry> readLocalLog(long logIndexStart, long logIndexEnd) {
-        readLock.lock();
-
-        try {
-            // 读取出来的时候是index从大到小排列的
-            List<LocalLogEntry> logEntryList = readLocalLogNoSort(logIndexStart, logIndexEnd);
-
-            // 翻转一下，令其按index从小到大排列
-            Collections.reverse(logEntryList);
-
-            return logEntryList;
-        }finally {
-            readLock.unlock();
-        }
-    }
-
-    /**
-     * 根据日志索引号，获得对应的日志记录
-     * 左右闭区间（logIndexStart <= {index} <= logIndexEnd）
-     * */
-    private List<LocalLogEntry> readLocalLogNoSort(long logIndexStart, long logIndexEnd) {
-        if(logIndexStart > logIndexEnd){
-            throw new MyRaftException("readLocalLog logIndexStart > logIndexEnd! " +
-                "logIndexStart=" + logIndexStart + " logIndexEnd=" + logIndexEnd);
-        }
-
-        boolean lockSuccess = readLock.tryLock();
-        if(!lockSuccess){
-            throw new MyRaftException("readLocalLogNoSort lock error!");
-        }
-
-        try {
-            List<LocalLogEntry> logEntryList = new ArrayList<>();
-            try (RandomAccessFile randomAccessFile = new RandomAccessFile(this.logFile, "r")) {
-                // 从后往前找
-                long offset = this.currentOffset;
-
-                if (offset >= LONG_SIZE) {
-                    // 跳转到最后一个记录的offset处
-                    randomAccessFile.seek(offset - LONG_SIZE);
-                }
-
-                while (offset > 0) {
-                    // 获得记录的offset
-                    long entryOffset = randomAccessFile.readLong();
-                    // 跳转至对应位置
-                    randomAccessFile.seek(entryOffset);
-
-                    long targetLogIndex = randomAccessFile.readLong();
-                    if (targetLogIndex < logIndexStart) {
-                        // 从下向上找到的顺序，如果已经小于参数指定的了，说明日志里根本就没有需要的日志条目，直接返回null
-                        return logEntryList;
-                    }
-
-                    LocalLogEntry localLogEntry = readLocalLogByOffset(randomAccessFile, targetLogIndex);
-                    if (targetLogIndex <= logIndexEnd) {
-                        // 找到的符合要求
-                        logEntryList.add(localLogEntry);
-                    }
-
-                    offset = localLogEntry.getStartOffset();
-                    if (offset < LONG_SIZE) {
-                        // 整个文件都读完了
-                        return logEntryList;
-                    }
-
-                    // 跳转到上一条记录的offset处
-                    randomAccessFile.seek(offset - LONG_SIZE);
-                }
-            } catch (IOException e) {
-                throw new MyRaftException("logModule readLog error!", e);
-            }
-
-            // 找遍了整个文件，也没找到，返回null
-            return logEntryList;
-        }finally {
-            readLock.unlock();
-        }
-    }
-
-    /**
-     * 删除包括logIndex以及更大序号的所有日志
-     * */
-    public void deleteLocalLog(long logIndexNeedDelete){
-        // 已经确认提交的日志不能删除
-        if(logIndexNeedDelete <= this.lastCommittedIndex){
-            throw new MyRaftException("can not delete committed log! " +
-                "logIndexNeedDelete=" + logIndexNeedDelete + ",lastCommittedIndex=" + this.lastIndex);
-        }
-
-        boolean lockSuccess = writeLock.tryLock();
-        if(!lockSuccess){
-            logger.error("deleteLocalLog lock error!");
-            return;
-        }
-
-        try(RandomAccessFile randomAccessFile = new RandomAccessFile(this.logFile,"r")) {
-            // 从后往前找
-            long offset = this.currentOffset;
-
-            if(offset >= LONG_SIZE) {
-                // 跳转到最后一个记录的offset处
-                randomAccessFile.seek(offset - LONG_SIZE);
-            }
-
-            while (offset > 0) {
-                // 获得记录的offset
-                long entryOffset = randomAccessFile.readLong();
-                // 跳转至对应位置
-                randomAccessFile.seek(entryOffset);
-
-                long targetLogIndex = randomAccessFile.readLong();
-                if(targetLogIndex < logIndexNeedDelete){
-                    // 从下向上找到的顺序，如果已经小于参数指定的了，说明日志里根本就没有需要删除的日志条目，直接返回
-                    return;
-                }
-
-                // 找到了对应的日志条目
-                if(targetLogIndex == logIndexNeedDelete){
-                    // 把文件的偏移量刷新一下就行(相当于逻辑删除这条日志以及之后的entry)
-                    this.currentOffset = entryOffset;
-                    refreshMetadata(this.logMetaDataFile,this.currentOffset);
-                    return;
-                }else{
-                    // 没找到
-
-                    // 跳过当前日志的剩余部分，继续向上找
-                    randomAccessFile.readInt();
-                    int commandLength = randomAccessFile.readInt();
-                    randomAccessFile.read(new byte[commandLength]);
-
-                    // preLogOffset
-                    offset = randomAccessFile.readLong();
-                    // 跳转到记录的offset处
-                    randomAccessFile.seek(offset - LONG_SIZE);
-                }
-            }
-
-            this.lastIndex = logIndexNeedDelete - 1;
-        } catch (IOException e) {
-            throw new MyRaftException("logModule deleteLog error!",e);
-        } finally {
-            writeLock.unlock();
-        }
-    }
-    
-    public LogEntry getLastLogEntry(){
-        LogEntry lastLogEntry = readLocalLog(this.lastIndex);
-        if(lastLogEntry != null){
-            return lastLogEntry;
-        }else {
-            return LogEntry.getEmptyLogEntry();
-        }
-    }
-
-    // ============================= get/set ========================================
-
-    public long getLastIndex() {
-        return lastIndex;
-    }
-
-    public long getLastCommittedIndex() {
-        return lastCommittedIndex;
-    }
-
-    public void setLastCommittedIndex(long lastCommittedIndex) {
-        writeLock.lock();
-
-        try {
-            if (lastCommittedIndex < this.lastCommittedIndex) {
-                throw new MyRaftException("set lastCommittedIndex error this.lastCommittedIndex=" + this.lastCommittedIndex
-                    + " lastCommittedIndex=" + lastCommittedIndex);
-            }
-
-            this.lastCommittedIndex = lastCommittedIndex;
-        }finally {
-            writeLock.unlock();
-        }
-    }
-
-    public long getLastApplied() {
-        return lastApplied;
-    }
-
-    public void setLastApplied(long lastApplied) {
-        writeLock.lock();
-
-        try {
-            if (lastApplied < this.lastApplied) {
-                throw new MyRaftException("set lastApplied error this.lastApplied=" + this.lastApplied
-                    + " lastApplied=" + lastApplied);
-            }
-
-            this.lastApplied = lastApplied;
-        }finally {
-            writeLock.unlock();
-        }
-    }
-
-    private LocalLogEntry readLocalLogByOffset(RandomAccessFile randomAccessFile, long logIndex) throws IOException {
-        LocalLogEntry logEntry = new LocalLogEntry();
-        logEntry.setLogIndex(logIndex);
-        logEntry.setLogTerm(randomAccessFile.readInt());
-
-        int commandLength = randomAccessFile.readInt();
-        byte[] commandBytes = new byte[commandLength];
-        randomAccessFile.read(commandBytes);
-
-        String jsonStr = new String(commandBytes,StandardCharsets.UTF_8);
-        Command command = JsonUtil.json2Obj(jsonStr, Command.class);
-        logEntry.setCommand(command);
-
-        // 日志是位于[startOffset,endOffset)之间的，左闭右开
-        logEntry.setStartOffset(randomAccessFile.readLong());
-        logEntry.setEndOffset(randomAccessFile.getFilePointer());
-        return logEntry;
-    }
-
-    private static void refreshMetadata(File logMetaDataFile,long currentOffset) throws IOException {
-        logger.info("refreshMetadata currentOffset={}",currentOffset);
-        try(RandomAccessFile randomAccessFile = new RandomAccessFile(logMetaDataFile,"rw")){
-            randomAccessFile.seek(0);
-            randomAccessFile.writeLong(currentOffset);
-        }
-    }
-
-    private String getLogFileDir(){
-        return System.getProperty("user.dir")
-            + File.separator + currentServer.getServerId();
-    }
-}
-```
+todo logModule类的github地址链接
 ##### 状态机模块SimpleReplicationStateMachine
 * 状态机模块是一个K/V数据模型，本质上就是内存中维护了一个HashMap。状态机的读写操作就是对这个HashMap的读写操作，没有额外的逻辑。
 * 同时为了方便观察状态机中的数据状态，每次进行写操作时都整体刷新这个HashMap中的数据到对应的本地文件中(简单起见暂不考虑同步刷盘的性能问题)。
@@ -478,93 +71,6 @@ public class GetCommand implements Command{
 
    private String key;
 }
-```
-```java
-/**
- * 简易复制状态机(持久化到磁盘中的最基础的k/v数据库)
- * 简单起见：内存中是一个k/v Map，每次写请求都全量写入磁盘
- * */
-public class SimpleReplicationStateMachine implements KVReplicationStateMachine {
-    private static final Logger logger = LoggerFactory.getLogger(SimpleReplicationStateMachine.class);
-
-    private final ConcurrentHashMap<String,String> kvMap;
-
-    private final File persistenceFile;
-
-    private final ReentrantReadWriteLock reentrantLock = new ReentrantReadWriteLock();
-    private final ReentrantReadWriteLock.WriteLock writeLock = reentrantLock.writeLock();
-    private final ReentrantReadWriteLock.ReadLock readLock = reentrantLock.readLock();
-
-    public SimpleReplicationStateMachine(RaftServer raftServer){
-        String userPath = System.getProperty("user.dir") + File.separator + raftServer.getServerId();
-
-        this.persistenceFile = new File(userPath + File.separator + "raftReplicationStateMachine-" + raftServer.getServerId() + ".txt");
-        MyRaftFileUtil.createFile(persistenceFile);
-
-        // 状态机启动时不以持久化文件中的数据为准，而是等待leader的心跳执行一遍已提交的raft日志
-        // 所以在这里需要清空
-        kvMap = new ConcurrentHashMap<>();
-        MyRaftFileUtil.writeInFile(persistenceFile, JsonUtil.obj2Str(kvMap));
-    }
-
-    @Override
-    public void apply(SetCommand setCommand) {
-        if(setCommand instanceof EmptySetCommand){
-            // no-op，状态机无需做任何操作
-            logger.info("apply EmptySetCommand quick return!");
-            return;
-        }
-
-        logger.info("apply setCommand start,{}",setCommand);
-        writeLock.lock();
-        try {
-            kvMap.put(setCommand.getKey(), setCommand.getValue());
-
-            // 每次写操作完都持久化一遍(简单起见，暂时不考虑性能问题)
-            MyRaftFileUtil.writeInFile(persistenceFile, JsonUtil.obj2Str(kvMap));
-            logger.info("apply setCommand end");
-        }finally {
-            writeLock.unlock();
-        }
-    }
-
-    @Override
-    public void batchApply(List<SetCommand> setCommandList) {
-        writeLock.lock();
-        try{
-
-            setCommandList = setCommandList.stream()
-                // 过滤掉no-op操作
-                .filter(item->!(item instanceof EmptySetCommand))
-                .collect(Collectors.toList());
-
-            logger.info("batchApply setCommand start,size={}",setCommandList.size());
-
-            for(SetCommand setCommand : setCommandList){
-                logger.info("apply setCommand start,{}",setCommand);
-                kvMap.put(setCommand.getKey(), setCommand.getValue());
-            }
-
-            // 持久化(简单起见，暂时不考虑性能问题)
-            MyRaftFileUtil.writeInFile(persistenceFile, JsonUtil.obj2Str(kvMap));
-            logger.info("apply setCommand end");
-        }finally {
-            writeLock.unlock();
-        }
-    }
-
-    @Override
-    public String get(String key) {
-        readLock.lock();
-
-        try {
-            return kvMap.get(key);
-        }finally {
-            readLock.unlock();
-        }
-    }
-}
-
 ```
 ##### 客户端模块RaftClient
 * Raft客户端模块就是一个rpc的客户端(不依赖注册中心，基于静态服务配置的点对点rpc)，请求时使用负载均衡随机的获得一个raft服务节点访问。
@@ -1108,20 +614,120 @@ raft论文在第5.3节重点解释了一下原因，。
     }
 ```
 ## 3. 日志复制过程中异常情况分析
+在raft日志复制的过程中的任意瞬间，集群中的每个节点都可能出现宕机、网络超时等异常情况。下面分析在出现这些异常时，raft是如何保证集群正常工作的。
 todo raft日志复制流程图
-##### 
-1. client请求leader时，leader恰好宕机
-2. leader接受了client的请求，将raftLog落盘后宕机
-3. leader将raftLog落盘后，将日志广播给follower时，follower处理成功的数量未超过半数，leader宕机(没来得及删除本地未提交的raftLog)
-5. leader将raftLog落盘后，将日志广播给follower时，follower处理成功的数量超过半数，leader提交命令到状态机前宕机
-6. leader提交命令到状态机后，响应client前宕机
+###3.1 client请求leader时，leader恰好宕机
+client请求报错，client重试直到raft服务集群选举出新的leader后恢复工作。
+###3.2 leader接受了client的请求，将raftLog本地成功落盘后，广播日志前宕机
+client请求报错，重试直到选举出新leader(下面的异常情况client也是一样的处理)。  
+raft集群会进行选举选出新leader。宕机的老leader在回到集群后对应index的本地日志将会被新leader给覆盖掉。
+###3.3 leader将raftLog落盘后，将日志广播给follower时，follower处理成功的数量未超过半数，leader宕机(没来得及删除本地未提交的raftLog)
+当leader广播将日志复制到少数节点中宕机，则可能存在两种情况。
+1. 成功落盘的少数节点在新一轮选举中当选leader，则宕机的老leader回到集群后已经落盘的对应raftLog会被保留下来。
+2. 未成功落盘的节点当选了新leader，则宕机的老leader已经落盘的对应raftLog将会被覆盖清除掉。
+这两种情况都是正确的，因为未提交到状态机中的日志无论是被覆盖清除还是最终被提交，都是合理的。
+###3.4 leader将raftLog落盘后，将日志广播给follower时，follower处理成功的数量超过半数，leader提交命令到状态机前宕机
+如果对应log成功复制到了多数节点中，则按照上面所分析的raft选举安全性，只有拥有最新raftLog的那多数的节点才有机会当选为新leader。
+因此宕机的老leader重新回到集群后，落盘的raftLog将会被保留下来。
+###3.5 leader提交命令到状态机后，响应client前宕机
+整个集群的处理和3.4一样，宕机的老leader重新回到集群后，落盘的raftLog将会被保留下来。**唯一的区别在于宕机leader节点的状态机将会重复执行同一条raftLog**。  
+解决这一问题的方法主要有两种：  
+1. 要求状态机的具体实现能够容忍raftLog重复的执行，或者设计对相同log幂等的防护(MyRaft的方案，状态机数据不持久化并且只有纯set操作，无自增/自减等非幂等操作)。
+2. raft协议的实现中将lastApplied属性持久化，通过持久化lastApplied的方式来避免宕机恢复后重复执行日志。
+#####
+[为什么 Raft 的 ApplyIndex 和 CommitIndex 不需要持久化？](https://www.zhihu.com/question/382888510/answer/2478166051)
 
 ## 4. MyRaft日志复制功能验证
 ##### 命令行交互式客户端介绍
-RpcCmdInteractiveClient 
+MyRaft实现了一个非常基础的命令行交互式客户端(RpcCmdInteractiveClient)用于测试MyRaft这一kv数据库的读写功能。
+```java
+/**
+ * 命令行交互的客户端
+ *
+ * 只支持以下命令
+ * 1. get [key]
+ * 2. set [key] [value]
+ * 3. quit
+ * */
+public class RpcCmdInteractiveClient {
+
+    public static void main(String[] args) {
+        // 客户端的超时时间必须大于raft内部rpc的超时时间，否则在节点故障时rpc会一直超时
+        DefaultFuture.DEFAULT_TIME_OUT = 3000L;
+
+        RaftClient raftClient = new RaftClient(RaftClusterGlobalConfig.registry);
+        raftClient.init();
+        raftClient.setRaftNodeConfigList(RaftClusterGlobalConfig.raftNodeConfigList);
+
+        Scanner scan = new Scanner(System.in);
+
+        System.out.println("RpcCmdInteractiveClient start, please input command:");
+
+        while(scan.hasNext()) {
+            String input = scan.nextLine();
+            if(input.length() == 0){
+                continue;
+            }
+
+            if (Objects.equals(input, "quit")) {
+                scan.close();
+                System.out.println("RpcCmdInteractiveClient quit success!");
+                return;
+            }
+
+            if (input.startsWith("get")) {
+                processGetCmd(raftClient,input);
+            }else if(input.startsWith("set")){
+                processSetCmd(raftClient,input);
+            }else{
+                System.out.println("un support cmd, please retry！");
+            }
+        }
+    }
+
+    private static void processGetCmd(RaftClient raftClient, String input){
+        try {
+            String[] cmdItem = input.split(" ");
+            if (cmdItem.length != 2) {
+                System.out.println("get cmd error, please retry！");
+                return;
+            }
+
+            String key = cmdItem[1];
+            String result = raftClient.doRequestRetry(new GetCommand(key),2);
+            System.out.println("processGet result=" + result);
+        }catch (Exception e){
+            System.out.println("processGet error!");
+            e.printStackTrace();
+        }
+    }
+
+    private static void processSetCmd(RaftClient raftClient, String input){
+        try {
+            String[] cmdItem = input.split(" ");
+            if (cmdItem.length != 3) {
+                System.out.println("set cmd error, please retry！");
+                return;
+            }
+
+            String key = cmdItem[1];
+            String value = cmdItem[2];
+            String result = raftClient.doRequestRetry(new SetCommand(key, value),2);
+            System.out.println("processSet success=" + result);
+        }catch (Exception e){
+            System.out.println("processSetCmd error!");
+            e.printStackTrace();
+        }
+    }
+}
+```
 todo 附操作截图
-##### 验证case
+##### 验证MyRaft日志复制功能的case
+在github源码中的test目录下中有RpcClientNode(1-5)类,全部以main方法启动后便可形成一个5节点的raft集群。通过RpcCmdInteractiveClient便可以通过以下几个case简单验证MyRaft关于日志复制的基本功能。
 1. 启动所有节点，进行一系列的读写操作。检查每个节点中日志/状态机中的数据是否符合预期
-2. 将某一个节点关闭，删除掉它状态机对应的文件(相当于清空了状态机)，重新启动后leader的心跳会触发全量日志再一次作用到状态机中。检查状态机的数据是否符合预期
-3. 将某一个节点关闭，继续进行一系列的读写操作。然后将节点恢复，在进行新的写操作后，leader会将宕机时丢失的那部分日志同步到该节点，并且日志是否成功的提交到状态机中执行。检查日志/状态机的数据是否符合预期
+2. 将任意一个节点关闭，删除掉状态机对应的文件(相当于清空了kv状态机里的数据)，重新启动后leader的心跳会触发全量日志再一次作用到状态机中。检查状态机的数据是否符合预期
+3. 将任意一个节点关闭，继续进行一系列的读写操作。然后将节点重启恢复，在进行新的写操作后，leader会将宕机时丢失的那部分日志同步到该节点，并且日志是否成功的提交到状态机中执行。检查日志/状态机的数据是否符合预期
 ## 5. 总结
+* 作为手写raft系列博客的第二篇，在博客的第1节简单介绍了raft的日志复制功能，第2节详细分析了MyRaft关于日志复制功能的实现源码，第3节通过分析日志复制过程中异常情况的处理来证明raft日志复制功能的正确性。
+* raft的日志复制功能是raft算法中最复杂的一部分，除了正常执行逻辑以外还包含了大量异常情况的处理。在博客中我结合MyRaft的源码尽可能的将自己理解的各种细节分享出来，希望能帮到对raft实现细节、正确性证明等相关内容感兴趣的读者。
+* 博客中展示的完整代码在我的github上：https://github.com/1399852153/MyRaft (release/release/lab2_log_replication分支)，希望能帮助到对raft算法感兴趣的小伙伴。内容如有错误，还请多多指教。
