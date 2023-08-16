@@ -1,6 +1,6 @@
 # 手写raft(二) 实现日志复制
 ## 1. Raft日志复制介绍
-在上一篇博客中MyRaft实现了leader选举，为实现日志复制功能打下了基础: [手写raft(一) 实现leader选举](https://www.cnblogs.com/xiaoxiongcanguan/p/17569697.html)  
+在上一篇博客中MyRaft实现了leader选举，为接下来实现日志复制功能打下了基础: [手写raft(一) 实现leader选举](https://www.cnblogs.com/xiaoxiongcanguan/p/17569697.html)  
 #####
 日志复制是raft最核心也是最复杂的功能，大体上来说一次正常的raft日志复制大致可以简化为以下几步完成：  
 1. 客户端向raft集群发送一次操作请求(比如kv数据库状态机的写命令(set k1 v1))，如果接受到请求的节点是leader则受理该请求；
@@ -11,6 +11,8 @@
    如果成功的数量少于半数则认为该客户端请求失败，不提交到状态机中，并将本地写入的日志删除掉，让客户端去重试。
 4. leader提交日志给状态机后，会修改自己的lastApplied字段(最大已提交日志索引编号)，随后通过心跳等rpc交互令follower也提交本地对应索引的日志到状态机中
 5. 至此，一次完整的日志复制过程完成，一切正常的情况下整个集群中所有节点的本地日志中都包含了对应请求的日志，每个节点的状态机也执行了对应日志包含的状态机指令。
+##### raft日志复制流程图
+![img_1.png](img_1.png)
 #####
 * 上面关于raft日志复制功能的介绍看起来不算复杂，在一切正常的情况下系统似乎能很好的完成任务。但raft是一个分布式系统，分布式系统中会出现各种麻烦的异常情况，在上述任务的每一步、任一瞬间都可能出现网络故障、机器宕机(leader/follower都可能处理到一半就宕机)等问题，
 而如何在异常情况下依然能让系统正常完成任务就使得raft日志复制的逻辑变得复杂起来了。  
@@ -44,8 +46,10 @@ public class LogEntry implements Serializable {
     private Command command;
 }
 ```
-todo LogEntry在磁盘文件中存储的示意图
-todo logModule类的github地址链接
+LogEntry在磁盘文件中存储的示意图
+![img.png](img.png)
+##### 
+[logModule类源码](https://github.com/1399852153/MyRaft/blob/release/lab2_log_replication/raft/src/main/java/myraft/module/LogModule.java)
 ##### 状态机模块SimpleReplicationStateMachine
 * 状态机模块是一个K/V数据模型，本质上就是内存中维护了一个HashMap。状态机的读写操作就是对这个HashMap的读写操作，没有额外的逻辑。
 * 同时为了方便观察状态机中的数据状态，每次进行写操作时都整体刷新这个HashMap中的数据到对应的本地文件中(简单起见暂不考虑同步刷盘的性能问题)。
@@ -153,8 +157,8 @@ public class RaftClient {
 ```
 ### 2.2 MyRaft日志复制实现分析
 ##### MyRaft处理客户端请求
-* raft是一个强一致的读写模型，因此只有leader才能对外进行服务。因此raft服务节点收到来自客户端的请求时，需要判断一下自己是否是leader，如果不是leader就返回自己认为的leader地址给客户端，让客户端重试。  
-raft是一个分布式模型，在出现网络分区等情况下，原来是leader的节点(term更小的老leader)可能并不是目前真正的leader，而这个情况下接到客户端请求的老leader就会错误的处理客户端的请求。  
+* raft是一个强一致的读写模型，只有leader才能对外进行服务。因此raft服务节点收到来自客户端的请求时，需要判断一下自己是否是leader，如果不是leader就返回自己认为的leader地址给客户端，让客户端重试。  
+raft是一个分布式模型，在出现网络分区等情况下，原来是leader的节点(term更小的老leader)可能并不是目前真正的leader，而这个情况下接到客户端请求的老leader就会错误的处理客户端的请求，因而需要额外的机制来保证raft强一致的读写特性。  
 * 线性强一致的写：raft的leader节点在处理客户端请求时会加写锁(线性一致)。提交指令到状态机中执行前，会预先写入一份本地日志，并将本地日志广播到集群中的所有follower节点上。如果自己已经不再是合法的leader，则本地日志的广播是无法在超过半数的节点上执行成功的。
   反过来说，只要大多数的节点都成功完成了日志复制的rpc请求(appendEntries)，则该写操作就是强一致下的写，因此可以将命令安全的提交到状态机中并向客户端返回成功。
 * 线性强一致的读：强一致的读就不能让老leader处理读请求，因为很可能老leader相比实际上合法的新leader缺失了一些最新的写操作，而导致返回过时的数据(破坏了强一致读的语义)。因此对于读指令，业界提出了几种常见的确保强一致读的方案。
@@ -422,6 +426,7 @@ raft论文在第5.3节重点解释了一下原因，。
 1. 举个例子，一个5节点的集群，节点编号分别是abcde。在任期1中a是leader，尝试向集群复制一个日志(index=1，term=1，set k1=v1)，但是复制时失败了，只有节点b成功的复制了该日志，而cde都没有持有日志。  
 2. 恰好这时leader a宕机了，触发新选举后节点c成为了新的leader(任期term=2)。c接受到客户端请求，也尝试向集群复制一个日志(index=1，term=2, set k1=v2)，这个时候节点b有一个index=1，这个时候节点b必须让新的日志覆盖掉老的日志才能和leader保持一致。  
 3. c的这次日志复制成功了，bcde四个节点都持有了该日志，则raft集群便可以将这个日志提交到状态机中了，最后集群的所有状态机中k1的值将会是v2，而不是之前复制失败而未提交的v1。
+#####
 ![whyJudgePrevTerm.png](whyJudgePrevTerm.png)
 #####
 ```java
@@ -615,7 +620,6 @@ raft论文在第5.3节重点解释了一下原因，。
 ```
 ## 3. 日志复制过程中异常情况分析
 在raft日志复制的过程中的任意瞬间，集群中的每个节点都可能出现宕机、网络超时等异常情况。下面分析在出现这些异常时，raft是如何保证集群正常工作的。
-todo raft日志复制流程图
 ###3.1 client请求leader时，leader恰好宕机
 client请求报错，client重试直到raft服务集群选举出新的leader后恢复工作。
 ###3.2 leader接受了client的请求，将raftLog本地成功落盘后，广播日志前宕机
@@ -721,7 +725,8 @@ public class RpcCmdInteractiveClient {
     }
 }
 ```
-todo 附操作截图
+##### 操作截图
+![img_2.png](img_2.png)
 ##### 验证MyRaft日志复制功能的case
 在github源码中的test目录下中有RpcClientNode(1-5)类,全部以main方法启动后便可形成一个5节点的raft集群。通过RpcCmdInteractiveClient便可以通过以下几个case简单验证MyRaft关于日志复制的基本功能。
 1. 启动所有节点，进行一系列的读写操作。检查每个节点中日志/状态机中的数据是否符合预期

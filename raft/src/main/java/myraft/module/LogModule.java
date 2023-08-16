@@ -145,10 +145,8 @@ public class LogModule {
             for(LogEntry logEntryItem : logEntryList){
                 // 在offset指定的位置后面追加写入
                 randomAccessFile.seek(offset);
-
-                writeLog(randomAccessFile,logEntryItem);
-
-                randomAccessFile.writeLong(offset);
+                // 向本地文件中写入日志的内容
+                writeLog(randomAccessFile,logEntryItem,offset);
 
                 // 更新偏移量
                 offset = randomAccessFile.getFilePointer();
@@ -168,13 +166,16 @@ public class LogModule {
         }
     }
 
-    private static void writeLog(RandomAccessFile randomAccessFile, LogEntry logEntry) throws IOException {
+    private static void writeLog(RandomAccessFile randomAccessFile, LogEntry logEntry, long startOffset) throws IOException {
         randomAccessFile.writeLong(logEntry.getLogIndex());
         randomAccessFile.writeInt(logEntry.getLogTerm());
 
         byte[] commandBytes = JsonUtil.obj2Str(logEntry.getCommand()).getBytes(StandardCharsets.UTF_8);
         randomAccessFile.writeInt(commandBytes.length);
         randomAccessFile.write(commandBytes);
+
+        // 写入当前日志起始的偏移值（LocalLogEntry.startOffset）
+        randomAccessFile.writeLong(startOffset);
     }
 
     /**
@@ -543,7 +544,7 @@ public class LogModule {
         Command command = JsonUtil.json2Obj(jsonStr, Command.class);
         logEntry.setCommand(command);
 
-        // 日志是位于[startOffset,endOffset)之间的，左闭右开
+        // 本条日志位于[startOffset,endOffset)之间，左闭右开
         logEntry.setStartOffset(randomAccessFile.readLong());
         logEntry.setEndOffset(randomAccessFile.getFilePointer());
         return logEntry;

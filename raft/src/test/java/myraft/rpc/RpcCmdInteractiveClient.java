@@ -80,8 +80,8 @@ public class RpcCmdInteractiveClient {
 
             String key = cmdItem[1];
             String value = cmdItem[2];
-            String result = raftClient.doRequestRetry(new SetCommand(key, value),2);
-            System.out.println("processSet success=" + result);
+            raftClient.doRequestRetry(new SetCommand(key, value),2);
+            System.out.println("processSet success");
         }catch (Exception e){
             System.out.println("processSetCmd error!");
             e.printStackTrace();

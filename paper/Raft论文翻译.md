@@ -1688,7 +1688,7 @@ Using more randomness improves worst-case behavior: with 50ms of randomness the 
 图16中的上图显示了，只要少量的随机化选举超时时间就足够避免选举时的投票分裂。
 在缺乏随机性的情况下，由于许多分裂的投票，在我们的测试中leader选举一直持续了超过10秒钟。
 只要增加5ms的随机性就能有显著的帮助，平均的停机时间中位数为287ms。
-使用更多的随机性可以盖申最坏情况下的行为：有着50ms的随机性时最坏情况下(超过1000次实验)的选举完成时间为513ms。
+使用更多的随机性可以改善最坏情况下的行为：有着50ms的随机性时最坏情况下(超过1000次实验)的选举完成时间为513ms。
 
 #####
 The bottom graph in Figure 16 shows that downtime can be reduced by reducing the election timeout. 
