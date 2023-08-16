@@ -15,3 +15,4 @@ raft的论文中将raft算法的功能分解为4个模块：
 
 ### 博客地址
 * leader选举 博客地址：[手写raft(一) 实现leader选举](https://www.cnblogs.com/xiaoxiongcanguan/p/17569697.html)
+* 日志复制    博客地址：[手写raft(二) 实现日志复制](https://www.cnblogs.com/xiaoxiongcanguan/p/17636220.html)
