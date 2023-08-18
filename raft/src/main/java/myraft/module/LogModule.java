@@ -401,6 +401,8 @@ public class LogModule {
                         appendEntriesRpcParam.setPrevLogIndex(preLogEntry.getLogIndex());
                         appendEntriesRpcParam.setPrevLogTerm(preLogEntry.getLogTerm());
                     }else if(logEntryList.size() > 0 && logEntryList.size() <= indexRange){
+                        // todo 新增日志压缩功能后，查出来的数据个数小于指定的区间不一定就是查到第一条数据，还有可能是日志被压缩了
+
                         logger.info("find log size not match!");
                         // 日志长度小于索引区间值，说明已经查到最前面的日志 (比如appendLogEntryBatchNum=5，但一共只有3条日志全查出来了)
                         appendEntriesRpcParam.setEntries(logEntryList);
