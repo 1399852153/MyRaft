@@ -29,4 +29,9 @@ public interface RaftService {
      * 追加日志条目 AppendEntries
      * */
     AppendEntriesRpcResult appendEntries(AppendEntriesRpcParam appendEntriesRpcParam);
+
+    /**
+     * 快照安装 InstallSnapshot
+     * */
+    InstallSnapshotRpcResult installSnapshot(InstallSnapshotRpcParam installSnapshotRpcParam);
 }

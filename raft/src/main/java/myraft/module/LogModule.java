@@ -2,10 +2,9 @@ package myraft.module;
 
 import myraft.RaftServer;
 import myraft.api.command.Command;
-import myraft.api.model.AppendEntriesRpcParam;
-import myraft.api.model.AppendEntriesRpcResult;
-import myraft.api.model.LogEntry;
+import myraft.api.model.*;
 import myraft.api.service.RaftService;
+import myraft.common.model.RaftSnapshot;
 import myraft.exception.MyRaftException;
 import myraft.module.model.LocalLogEntry;
 import myraft.util.util.CommonUtil;
@@ -65,6 +64,8 @@ public class LogModule {
 
     private static final String logFileName = "raftLog.txt";
     private static final String logMetaDataFileName = "raftLogMeta.txt";
+    private static final String logTempFileName = "raftLog-temp.txt";
+    private static final String logMetaDataTempFileName = "raftLogMeta-temp.txt";
 
     public LogModule(RaftServer currentServer) throws IOException {
         this.currentServer = currentServer;
@@ -478,6 +479,65 @@ public class LogModule {
         }
     }
 
+    /**
+     * discard any existing or partial snapshot with a smaller index
+     * 快照整体安装完毕，清理掉index小于等于快照中lastIncludedIndex的所有日志
+     * */
+    public void compressLogBySnapshot(InstallSnapshotRpcParam installSnapshotRpcParam){
+        this.lastCommittedIndex = installSnapshotRpcParam.getLastIncludedIndex();
+        if(this.lastIndex < this.lastCommittedIndex){
+            this.lastIndex = this.lastCommittedIndex;
+        }
+
+        try {
+            buildNewLogFileRemoveCommittedLog();
+        } catch (IOException e) {
+            throw new MyRaftException("compressLogBySnapshot error",e);
+        }
+    }
+
+    public static void doInstallSnapshotRpc(RaftService targetNode, RaftSnapshot raftSnapshot, RaftServer currentServer){
+        int installSnapshotBlockSize = currentServer.getRaftConfig().getInstallSnapshotBlockSize();
+        byte[] completeSnapshotData = raftSnapshot.getSnapshotData();
+
+        int currentOffset = 0;
+        while(true){
+            InstallSnapshotRpcParam installSnapshotRpcParam = new InstallSnapshotRpcParam();
+            installSnapshotRpcParam.setLastIncludedIndex(raftSnapshot.getLastIncludedIndex());
+            installSnapshotRpcParam.setTerm(currentServer.getCurrentTerm());
+            installSnapshotRpcParam.setLeaderId(currentServer.getServerId());
+            installSnapshotRpcParam.setLastIncludedTerm(raftSnapshot.getLastIncludedTerm());
+            installSnapshotRpcParam.setOffset(currentOffset);
+
+            // 填充每次传输的数据块
+            int blockSize = Math.min(installSnapshotBlockSize,completeSnapshotData.length-currentOffset);
+            byte[] block = new byte[blockSize];
+            System.arraycopy(completeSnapshotData,currentOffset,block,0,blockSize);
+            installSnapshotRpcParam.setData(block);
+
+            currentOffset += installSnapshotBlockSize;
+            if(currentOffset >= completeSnapshotData.length){
+                installSnapshotRpcParam.setDone(true);
+            }else{
+                installSnapshotRpcParam.setDone(false);
+            }
+
+            InstallSnapshotRpcResult installSnapshotRpcResult = targetNode.installSnapshot(installSnapshotRpcParam);
+
+            boolean beFollower = currentServer.processCommunicationHigherTerm(installSnapshotRpcResult.getTerm());
+            if(beFollower){
+                // 传输过程中发现自己已经不再是leader了，快速结束
+                logger.info("doInstallSnapshotRpc beFollower quick return!");
+                return;
+            }
+
+            if(installSnapshotRpcParam.isDone()){
+                logger.info("doInstallSnapshotRpc isDone!");
+                return;
+            }
+        }
+    }
+
     // ============================= get/set ========================================
 
     public long getLastIndex() {
@@ -561,5 +621,63 @@ public class LogModule {
     private String getLogFileDir(){
         return System.getProperty("user.dir")
             + File.separator + currentServer.getServerId();
+    }
+
+    /**
+     * 构建一个删除了已提交日志的新日志文件(日志压缩到快照里了)
+     * */
+    private void buildNewLogFileRemoveCommittedLog() throws IOException {
+        long lastCommitted = getLastCommittedIndex();
+        long lastIndex = getLastIndex();
+
+        // 暂不考虑读取太多造成内存溢出的问题
+        List<LocalLogEntry> logEntryList;
+        if(lastCommitted == lastIndex){
+            // (lastCommitted == lastIndex) 所有日志都提交了，创建一个空的新日志文件
+            logEntryList = new ArrayList<>();
+        }else{
+            // 还有日志没提交，把没提交的记录到新的日志文件中
+            logEntryList = readLocalLog(lastCommitted+1,lastIndex);
+        }
+
+        File tempLogFile = new File(getLogFileDir() + File.separator + logTempFileName);
+        MyRaftFileUtil.createFile(tempLogFile);
+        try(RandomAccessFile randomAccessTempLogFile = new RandomAccessFile(tempLogFile,"rw")) {
+
+            long currentOffset = 0;
+            for (LogEntry logEntry : logEntryList) {
+                // 写入日志
+                writeLog(randomAccessTempLogFile, logEntry, currentOffset);
+
+                currentOffset = randomAccessTempLogFile.getFilePointer();
+            }
+
+            this.currentOffset = currentOffset;
+        }
+
+        File tempLogMeteDataFile = new File(getLogFileDir() + File.separator + logMetaDataTempFileName);
+        MyRaftFileUtil.createFile(tempLogMeteDataFile);
+
+        // 临时的日志元数据文件写入数据
+        refreshMetadata(tempLogMeteDataFile,currentOffset);
+
+        writeLock.lock();
+        try{
+            // 先删掉原来的日志文件，然后把临时文件重名名为日志文件(delete后、重命名前可能宕机，但是没关系，重启后构造方法里做了对应处理)
+            this.logFile.delete();
+            boolean renameLogFileResult = tempLogFile.renameTo(this.logFile);
+            if(!renameLogFileResult){
+                logger.error("renameLogFile error!");
+            }
+
+            // 先删掉原来的日志元数据文件，然后把临时文件重名名为日志元数据文件(delete后、重命名前可能宕机，但是没关系，重启后构造方法里做了对应处理)
+            this.logMetaDataFile.delete();
+            boolean renameTempLogMeteDataFileResult = tempLogMeteDataFile.renameTo(this.logMetaDataFile);
+            if(!renameTempLogMeteDataFileResult){
+                logger.error("renameTempLogMeteDataFile error!");
+            }
+        }finally {
+            writeLock.unlock();
+        }
     }
 }

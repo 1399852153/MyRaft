@@ -1,5 +1,6 @@
 package myraft.module;
 
+import com.fasterxml.jackson.core.type.TypeReference;
 import myraft.RaftServer;
 import myraft.api.command.EmptySetCommand;
 import myraft.api.command.SetCommand;
@@ -11,6 +12,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.File;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
@@ -23,7 +25,7 @@ import java.util.stream.Collectors;
 public class SimpleReplicationStateMachine implements KVReplicationStateMachine {
     private static final Logger logger = LoggerFactory.getLogger(SimpleReplicationStateMachine.class);
 
-    private final ConcurrentHashMap<String,String> kvMap;
+    private volatile ConcurrentHashMap<String,String> kvMap;
 
     private final File persistenceFile;
 
@@ -95,6 +97,31 @@ public class SimpleReplicationStateMachine implements KVReplicationStateMachine 
 
         try {
             return kvMap.get(key);
+        }finally {
+            readLock.unlock();
+        }
+    }
+
+    @Override
+    public void installSnapshot(byte[] snapshot) {
+        writeLock.lock();
+
+        try {
+            // 简单起见，一把梭
+            String mapJson = new String(snapshot, StandardCharsets.UTF_8);
+            this.kvMap = JsonUtil.json2Obj(mapJson, new TypeReference<ConcurrentHashMap<String, String>>() {});
+        }finally {
+            writeLock.unlock();
+        }
+    }
+
+    @Override
+    public byte[] buildSnapshot() {
+        readLock.lock();
+
+        try {
+            String mapJson = JsonUtil.obj2Str(kvMap);
+            return mapJson.getBytes(StandardCharsets.UTF_8);
         }finally {
             readLock.unlock();
         }

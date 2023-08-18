@@ -1,4 +1,4 @@
-package myraft.api;
+package myraft.api.model;
 
 import java.io.Serializable;
 

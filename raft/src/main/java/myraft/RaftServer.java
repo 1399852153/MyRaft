@@ -1,6 +1,6 @@
 package myraft;
 
-import myraft.api.URLAddress;
+import myraft.api.model.URLAddress;
 import myraft.api.command.GetCommand;
 import myraft.api.command.SetCommand;
 import myraft.api.model.*;
@@ -9,6 +9,7 @@ import myraft.common.config.RaftConfig;
 import myraft.common.config.RaftNodeConfig;
 import myraft.common.enums.ServerStatusEnum;
 import myraft.common.model.RaftServerMetaData;
+import myraft.common.model.RaftSnapshot;
 import myraft.exception.MyRaftException;
 import myraft.module.*;
 import myraft.module.api.KVReplicationStateMachine;
@@ -58,6 +59,7 @@ public class RaftServer implements RaftService {
     private RaftLeaderElectionModule raftLeaderElectionModule;
     private RaftHeartbeatBroadcastModule raftHeartbeatBroadcastModule;
     private LogModule logModule;
+    private SnapshotModule snapshotModule;
     private KVReplicationStateMachine kvReplicationStateMachine;
 
     /**
@@ -298,6 +300,38 @@ public class RaftServer implements RaftService {
         return new AppendEntriesRpcResult(this.raftServerMetaDataPersistentModule.getCurrentTerm(), true);
     }
 
+    @Override
+    public InstallSnapshotRpcResult installSnapshot(InstallSnapshotRpcParam installSnapshotRpcParam) {
+        logger.info("installSnapshot start! serverId={},installSnapshotRpcParam={}",this.serverId,installSnapshotRpcParam);
+
+        if(installSnapshotRpcParam.getTerm() < this.raftServerMetaDataPersistentModule.getCurrentTerm()){
+            // Reply immediately if term < currentTerm
+            // 拒绝处理任期低于自己的老leader的请求
+
+            logger.info("installSnapshot term < currentTerm");
+            return new InstallSnapshotRpcResult(this.raftServerMetaDataPersistentModule.getCurrentTerm());
+        }
+
+        // 安装快照
+        this.snapshotModule.appendInstallSnapshot(installSnapshotRpcParam);
+
+        // 快照已经完全安装好了
+        if(installSnapshotRpcParam.isDone()){
+            // discard any existing or partial snapshot with a smaller index
+            // 快照整体安装完毕，清理掉index小于等于快照中lastIncludedIndex的所有日志(日志压缩)
+            logModule.compressLogBySnapshot(installSnapshotRpcParam);
+
+            // Reset state machine using snapshot contents (and load snapshot’s cluster configuration)
+            // follower的状态机重新安装快照
+            RaftSnapshot raftSnapshot = this.snapshotModule.readSnapshot();
+            kvReplicationStateMachine.installSnapshot(raftSnapshot.getSnapshotData());
+        }
+
+        logger.info("installSnapshot end! serverId={}",this.serverId);
+
+        return new InstallSnapshotRpcResult(this.raftServerMetaDataPersistentModule.getCurrentTerm());
+    }
+
     private void pushStatemachineApply(long lastCommittedIndex){
         long lastApplied = logModule.getLastApplied();
 
@@ -384,6 +418,10 @@ public class RaftServer implements RaftService {
 
     public LogModule getLogModule() {
         return logModule;
+    }
+
+    public SnapshotModule getSnapshotModule() {
+        return snapshotModule;
     }
 
     public void refreshRaftServerMetaData(RaftServerMetaData raftServerMetaData){

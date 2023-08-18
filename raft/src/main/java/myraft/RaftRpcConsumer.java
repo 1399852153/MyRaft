@@ -45,6 +45,14 @@ public class RaftRpcConsumer implements RaftService {
         return result;
     }
 
+    @Override
+    public InstallSnapshotRpcResult installSnapshot(InstallSnapshotRpcParam installSnapshotRpcParam) {
+        // 强制指定rpc目标的ip/port
+        setTargetProviderUrl();
+        InstallSnapshotRpcResult result = raftServiceProxy.installSnapshot(installSnapshotRpcParam);
+        return result;
+    }
+
     private void setTargetProviderUrl(){
         ConsumerRpcContext consumerRpcContext = ConsumerRpcContextHolder.getConsumerRpcContext();
         consumerRpcContext.setTargetProviderAddress(

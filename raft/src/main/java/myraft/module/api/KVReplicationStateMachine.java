@@ -24,4 +24,14 @@ public interface KVReplicationStateMachine {
      * */
     String get(String key);
 
+    /**
+     * 安装快照
+     * */
+    void installSnapshot(byte[] snapshot);
+
+    /**
+     * 构建并返回当前状态机快照
+     * */
+    byte[] buildSnapshot();
+
 }

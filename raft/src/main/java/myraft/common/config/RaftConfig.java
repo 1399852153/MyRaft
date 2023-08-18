@@ -55,7 +55,17 @@ public class RaftConfig {
     /**
      * appendEntries批量发送日志的条数(必须大于0)
      * */
-    private int appendLogEntryBatchNum = 1;
+    private int appendLogEntryBatchNum = 2;
+
+    /**
+     * 日志文件生成快照的阈值(单位：byte字节)
+     * */
+    private long logFileThreshold;
+
+    /**
+     * 快照安装的rpc，每次传输的数据块大小
+     * */
+    private int installSnapshotBlockSize;
 
     public RaftConfig(RaftNodeConfig currentNodeConfig,List<RaftNodeConfig> raftNodeConfigList) {
         this.serverId = currentNodeConfig.getServerId();
@@ -132,6 +142,22 @@ public class RaftConfig {
 
     public void setAppendLogEntryBatchNum(int appendLogEntryBatchNum) {
         this.appendLogEntryBatchNum = appendLogEntryBatchNum;
+    }
+
+    public long getLogFileThreshold() {
+        return logFileThreshold;
+    }
+
+    public void setLogFileThreshold(long logFileThreshold) {
+        this.logFileThreshold = logFileThreshold;
+    }
+
+    public int getInstallSnapshotBlockSize() {
+        return installSnapshotBlockSize;
+    }
+
+    public void setInstallSnapshotBlockSize(int installSnapshotBlockSize) {
+        this.installSnapshotBlockSize = installSnapshotBlockSize;
     }
 
     private boolean isOddNumber(int num){

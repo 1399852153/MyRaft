@@ -1,8 +1,6 @@
 package myraft.api.model;
 
 
-import myraft.api.URLAddress;
-
 import java.io.Serializable;
 
 public class ClientRequestResult implements Serializable {
