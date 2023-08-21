@@ -62,6 +62,8 @@ public class LogModule {
     private final ReentrantReadWriteLock.WriteLock writeLock = reentrantLock.writeLock();
     private final ReentrantReadWriteLock.ReadLock readLock = reentrantLock.readLock();
 
+    private final ScheduledExecutorService scheduledExecutorService = new ScheduledThreadPoolExecutor(1);
+
     private static final String logFileName = "raftLog.txt";
     private static final String logMetaDataFileName = "raftLogMeta.txt";
     private static final String logTempFileName = "raftLog-temp.txt";
@@ -107,6 +109,19 @@ public class LogModule {
                 this.lastIndex = -1;
             }
         }
+
+         /*
+          启动一个定时任务，检查日志文件是否超过阈值。
+          如果超过了，则找状态机获得一份快照（写入快照文件中），然后删除已提交的日志(加写锁，把当前未提交的日志列表读取出来写到一份新的文件里，令日志文件为新生成的文件)
+          */
+        scheduledExecutorService.scheduleWithFixedDelay(()->{
+            if(currentServer.getRaftConfig().getSnapshotEnable()){
+                // 未开启，不生成快照
+                return;
+            }
+
+            buildSnapshotCheck();
+        },10,10,TimeUnit.SECONDS);  // 为了测试时更快看到效果，10秒就检查一下
 
         logger.info("logModule init success, lastIndex={}",lastIndex);
     }
@@ -656,6 +671,47 @@ public class LogModule {
             + File.separator + currentServer.getServerId();
     }
 
+    private void buildSnapshotCheck() {
+        try {
+            if(!readLock.tryLock(1,TimeUnit.SECONDS)){
+                logger.info("buildSnapshotCheck lock fail, quick return!");
+                return;
+            }
+        } catch (InterruptedException e) {
+            throw new MyRaftException("buildSnapshotCheck tryLock error!",e);
+        }
+
+        try {
+            long logFileLength = this.logFile.length();
+            long logFileThreshold = currentServer.getRaftConfig().getLogFileThreshold();
+            if (logFileLength < logFileThreshold) {
+//                logger.info("logFileLength not reach threshold, do nothing. logFileLength={},threshold={}", logFileLength, logFileThreshold);
+                return;
+            }
+
+            logger.info("logFileLength already reach threshold, start buildSnapshot! logFileLength={},threshold={}", logFileLength, logFileThreshold);
+
+            byte[] snapshot = currentServer.getKvReplicationStateMachine().buildSnapshot();
+            LogEntry lastCommittedLogEntry = readLocalLog(this.lastCommittedIndex);
+
+            RaftSnapshot raftSnapshot = new RaftSnapshot();
+            raftSnapshot.setLastIncludedTerm(lastCommittedLogEntry.getLogTerm());
+            raftSnapshot.setLastIncludedIndex(lastCommittedLogEntry.getLogIndex());
+            raftSnapshot.setSnapshotData(snapshot);
+
+            // 持久化最新的一份快照
+            currentServer.getSnapshotModule().persistentNewSnapshotFile(raftSnapshot);
+        }finally {
+            readLock.unlock();
+        }
+
+        try {
+            buildNewLogFileRemoveCommittedLog();
+        } catch (IOException e) {
+            logger.error("buildNewLogFileRemoveCommittedLog error",e);
+        }
+    }
+
     /**
      * 构建一个删除了已提交日志的新日志文件(日志压缩到快照里了)
      * */
@@ -663,7 +719,7 @@ public class LogModule {
         long lastCommitted = getLastCommittedIndex();
         long lastIndex = getLastIndex();
 
-        // 暂不考虑读取太多造成内存溢出的问题
+        // 暂不考虑读取太多日志造成内存溢出的问题
         List<LocalLogEntry> logEntryList;
         if(lastCommitted == lastIndex){
             // (lastCommitted == lastIndex) 所有日志都提交了，创建一个空的新日志文件

@@ -67,6 +67,11 @@ public class RaftConfig {
      * */
     private int installSnapshotBlockSize;
 
+    /**
+     * 是否开启快照，默认关闭
+     * */
+    private Boolean snapshotEnable = false;
+
     public RaftConfig(RaftNodeConfig currentNodeConfig,List<RaftNodeConfig> raftNodeConfigList) {
         this.serverId = currentNodeConfig.getServerId();
         this.currentNodeConfig = currentNodeConfig;
@@ -158,6 +163,14 @@ public class RaftConfig {
 
     public void setInstallSnapshotBlockSize(int installSnapshotBlockSize) {
         this.installSnapshotBlockSize = installSnapshotBlockSize;
+    }
+
+    public Boolean getSnapshotEnable() {
+        return snapshotEnable;
+    }
+
+    public void setSnapshotEnable(Boolean snapshotEnable) {
+        this.snapshotEnable = snapshotEnable;
     }
 
     private boolean isOddNumber(int num){

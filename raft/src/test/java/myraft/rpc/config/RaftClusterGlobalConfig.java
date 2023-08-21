@@ -56,6 +56,16 @@ public class RaftClusterGlobalConfig {
      * */
     public static final Range<Integer> electionTimeoutRandomRange = new Range<>(150,500);
 
+    /**
+     * 当日志超过这个阈值时，就会生成快照文件(单位：byte字节)
+     * */
+    public static final int logFileThreshold = 256;
+
+    /**
+     * 每次installSnapshotRpc传输的数据大小
+     * */
+    public static final int installSnapshotBlockSize = 64;
+
     public static void initRaftRpcServer(String serverId){
         RaftNodeConfig currentNodeConfig = RaftClusterGlobalConfig.raftNodeConfigList
             .stream().filter(item->item.getServerId().equals(serverId)).findAny()
@@ -75,6 +85,11 @@ public class RaftClusterGlobalConfig {
         raftConfig.setElectionTimeoutRandomRange(RaftClusterGlobalConfig.electionTimeoutRandomRange);
         // appendEntries时批量发送的日志条数
         raftConfig.setAppendLogEntryBatchNum(appendLogEntryBatchNum);
+
+        // 开启快照
+        raftConfig.setSnapshotEnable(true);
+        raftConfig.setLogFileThreshold(RaftClusterGlobalConfig.logFileThreshold);
+        raftConfig.setInstallSnapshotBlockSize(RaftClusterGlobalConfig.installSnapshotBlockSize);
 
         RaftRpcServer raftRpcServer = new RaftRpcServer(raftConfig, RaftClusterGlobalConfig.registry);
         List<RaftService> raftServiceList = raftRpcServer.getRpcProxyList(otherNodeList);

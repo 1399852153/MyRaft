@@ -424,6 +424,10 @@ public class RaftServer implements RaftService {
         return snapshotModule;
     }
 
+    public KVReplicationStateMachine getKvReplicationStateMachine() {
+        return kvReplicationStateMachine;
+    }
+
     public void refreshRaftServerMetaData(RaftServerMetaData raftServerMetaData){
         this.raftServerMetaDataPersistentModule.refreshRaftServerMetaData(raftServerMetaData);
     }
