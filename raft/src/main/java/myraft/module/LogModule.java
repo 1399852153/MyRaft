@@ -389,8 +389,13 @@ public class LogModule {
 
                     // 索引区间大小
                     long indexRange = (logIndexEnd - nextIndex + 1);
+
+                    // 假设索引区间大小为N，可能有三种情况
+                    // 1. 查出0条日志，需要的日志全部被压缩了(因为是先落盘再广播，如果即没有日志也没有快照那就是有bug)
+                    // 2. 查出1至N-1条日志，部分日志被压缩到快照里 or 就是只有那么多日志(一次批量查5条，但当前总共只写入了3条)
+                    // 3. 查出N条日志，所需要的日志全都在本地日志文件里没有被压缩
                     if(logEntryList.size() == indexRange+1){
-                        // 一般情况能查出区间内的所有日志
+                        // 查出了区间内的所有日志(case 3)
 
                         logger.info("find log size match!");
                         // preLog
@@ -401,17 +406,42 @@ public class LogModule {
                         appendEntriesRpcParam.setPrevLogIndex(preLogEntry.getLogIndex());
                         appendEntriesRpcParam.setPrevLogTerm(preLogEntry.getLogTerm());
                     }else if(logEntryList.size() > 0 && logEntryList.size() <= indexRange){
-                        // todo 新增日志压缩功能后，查出来的数据个数小于指定的区间不一定就是查到第一条数据，还有可能是日志被压缩了
+                        // 查出了部分日志(case 2)
+                        // 新增日志压缩功能后，查出来的数据个数小于指定的区间不一定就是查到第一条数据，还有可能是日志被压缩了
 
                         logger.info("find log size not match!");
-                        // 日志长度小于索引区间值，说明已经查到最前面的日志 (比如appendLogEntryBatchNum=5，但一共只有3条日志全查出来了)
-                        appendEntriesRpcParam.setEntries(logEntryList);
 
-                        // 约定好第一条记录的prev的index和term都是-1
-                        appendEntriesRpcParam.setPrevLogIndex(-1);
-                        appendEntriesRpcParam.setPrevLogTerm(-1);
+                        RaftSnapshot readSnapshotNoData = currentServer.getSnapshotModule().readSnapshotMetaData();
+                        if(readSnapshotNoData != null){
+                            logger.info("has snapshot! readSnapshotNoData={}",readSnapshotNoData);
+
+                            // 存在快照，使用快照里保存的上一条日志信息
+                            appendEntriesRpcParam.setPrevLogIndex(readSnapshotNoData.getLastIncludedIndex());
+                            appendEntriesRpcParam.setPrevLogTerm(readSnapshotNoData.getLastIncludedTerm());
+                        }else{
+                            logger.info("no snapshot! prevLogIndex=-1, prevLogTerm=-1");
+
+                            // 没有快照，说明恰好发送第一条日志记录(比如appendLogEntryBatchNum=5，但一共只有3条日志全查出来了)
+                            // 第一条记录的prev的index和term都是-1
+                            appendEntriesRpcParam.setPrevLogIndex(-1);
+                            appendEntriesRpcParam.setPrevLogTerm(-1);
+                        }
+
+                        appendEntriesRpcParam.setEntries(logEntryList);
+                    } else if(logEntryList.isEmpty()){
+                        // 日志压缩把要同步的日志删除掉了，只能使用installSnapshotRpc了(case 1)
+                        logger.info("can not find and log entry，maybe delete for log compress");
+                        // 快照压缩导致leader更早的index日志已经不存在了
+
+                        // 应该改为使用installSnapshot来同步进度
+                        RaftSnapshot raftSnapshot = currentServer.getSnapshotModule().readSnapshot();
+                        doInstallSnapshotRpc(node,raftSnapshot,currentServer);
+
+                        // 走到这里，一般是成功的完成了快照的安装。目标follower目前已经有了包括lastIncludedIndex以及之前的所有日志
+                        // 如果是因为成为follower快速返回，则再循环一次就结束了
+                        nextIndex = raftSnapshot.getLastIncludedIndex() + 1;
+                        continue;
                     } else{
-                        // 正常情况是先持久化然后再广播同步日志，所以size肯定会大于0，也不应该超过索引区间值
                         // 走到这里不符合预期，日志模块有bug
                         throw new MyRaftException("replicationLogEntry logEntryList size error!" +
                             " nextIndex=" + nextIndex + " logEntryList.size=" + logEntryList.size());
@@ -534,6 +564,7 @@ public class LogModule {
             }
 
             if(installSnapshotRpcParam.isDone()){
+                // 快照整体安装完毕
                 logger.info("doInstallSnapshotRpc isDone!");
                 return;
             }
