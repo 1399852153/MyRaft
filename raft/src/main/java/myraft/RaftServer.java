@@ -86,6 +86,8 @@ public class RaftServer implements RaftService {
         // 服务器元数据模块
         this.raftServerMetaDataPersistentModule = new RaftServerMetaDataPersistentModule(raftConfig.getServerId());
         try {
+            // 快照模块必须先于日志模块初始化
+            snapshotModule = new SnapshotModule(this);
             // 日志模块
             logModule = new LogModule(this);
         } catch (IOException e) {

@@ -115,7 +115,7 @@ public class LogModule {
           如果超过了，则找状态机获得一份快照（写入快照文件中），然后删除已提交的日志(加写锁，把当前未提交的日志列表读取出来写到一份新的文件里，令日志文件为新生成的文件)
           */
         scheduledExecutorService.scheduleWithFixedDelay(()->{
-            if(currentServer.getRaftConfig().getSnapshotEnable()){
+            if(!currentServer.getRaftConfig().getSnapshotEnable()){
                 // 未开启，不生成快照
                 return;
             }
