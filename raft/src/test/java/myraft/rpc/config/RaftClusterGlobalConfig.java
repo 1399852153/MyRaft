@@ -87,7 +87,7 @@ public class RaftClusterGlobalConfig {
         raftConfig.setAppendLogEntryBatchNum(appendLogEntryBatchNum);
 
         // 开启快照
-//        raftConfig.setSnapshotEnable(true);
+        raftConfig.setSnapshotEnable(true);
         raftConfig.setLogFileThreshold(RaftClusterGlobalConfig.logFileThreshold);
         raftConfig.setInstallSnapshotBlockSize(RaftClusterGlobalConfig.installSnapshotBlockSize);
 

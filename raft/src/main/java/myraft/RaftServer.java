@@ -263,8 +263,19 @@ public class RaftServer implements RaftService {
         {
             LogEntry localPrevLogEntry = logModule.readLocalLog(appendEntriesRpcParam.getPrevLogIndex());
             if(localPrevLogEntry == null){
-                // 当前节点日志条目为空，说明完全没有日志(默认任期为-1，这个是约定)
-                localPrevLogEntry = LogEntry.getEmptyLogEntry();
+                // 没有查到prevLogIndex对应的日志，分两种情况
+                RaftSnapshot raftSnapshot = snapshotModule.readSnapshotMetaData();
+                localPrevLogEntry = new LogEntry();
+                if(raftSnapshot == null){
+                    // 当前节点日志条目为空,又没有快照，说明完全没有日志(默认任期为-1，这个是约定)
+                    localPrevLogEntry.setLogIndex(-1);
+                    localPrevLogEntry.setLogTerm(-1);
+                }else{
+                    // 日志里没有，但是有快照(把快照里记录的最后一条日志信息与leader的参数比对)
+                    // 如果匹配就ok，如果不匹配则返回不匹配，随后leader就会用installSnapshot来同步更早的日志过来
+                    localPrevLogEntry.setLogIndex(raftSnapshot.getLastIncludedIndex());
+                    localPrevLogEntry.setLogTerm(raftSnapshot.getLastIncludedTerm());
+                }
             }
 
             if (localPrevLogEntry.getLogTerm() != appendEntriesRpcParam.getPrevLogTerm()) {
