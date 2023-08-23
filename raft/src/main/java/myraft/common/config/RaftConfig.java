@@ -45,7 +45,7 @@ public class RaftConfig {
     /**
      * 心跳间隔时间 单位：秒
      * */
-    private int HeartbeatInternal;
+    private int heartbeatInternal = 1;
 
     /**
      * leader自动故障计数(用于触发自动选举的调试，和正常逻辑无关)
@@ -118,11 +118,11 @@ public class RaftConfig {
     }
 
     public int getHeartbeatInternal() {
-        return HeartbeatInternal;
+        return heartbeatInternal;
     }
 
     public void setHeartbeatInternal(int HeartbeatInternal) {
-        this.HeartbeatInternal = HeartbeatInternal;
+        this.heartbeatInternal = HeartbeatInternal;
     }
 
     public Range<Integer> getElectionTimeoutRandomRange() {

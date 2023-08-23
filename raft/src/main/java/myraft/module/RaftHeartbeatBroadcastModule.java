@@ -26,11 +26,11 @@ public class RaftHeartbeatBroadcastModule {
         this.rpcThreadPool = Executors.newFixedThreadPool(
             Math.max(currentServer.getOtherNodeInCluster().size() * 2, 1));
 
-        int HeartbeatInternal = currentServer.getRaftConfig().getHeartbeatInternal();
+        int heartbeatInternal = currentServer.getRaftConfig().getHeartbeatInternal();
 
         // 心跳广播任务需要以固定频率执行(scheduleAtFixedRate)
         scheduledExecutorService.scheduleAtFixedRate(
-            new HeartbeatBroadcastTask(currentServer,this),0, HeartbeatInternal, TimeUnit.SECONDS);
+            new HeartbeatBroadcastTask(currentServer,this),0, heartbeatInternal, TimeUnit.SECONDS);
     }
 
     public RaftServer getCurrentServer() {
