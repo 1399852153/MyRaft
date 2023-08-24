@@ -1,6 +1,8 @@
 package myraft.api.model;
 
-public class InstallSnapshotRpcParam {
+import java.io.Serializable;
+
+public class InstallSnapshotRpcParam implements Serializable {
 
     /**
      * 当前leader的任期值

@@ -1,6 +1,8 @@
 package myraft.api.model;
 
-public class InstallSnapshotRpcResult {
+import java.io.Serializable;
+
+public class InstallSnapshotRpcResult implements Serializable {
 
     private int term;
 
