@@ -406,11 +406,11 @@ public class LogModule {
                     long indexRange = (logIndexEnd - nextIndex + 1);
 
                     // 假设索引区间大小为N，可能有三种情况
-                    // 1. 查出0条日志，需要的日志全部被压缩了(因为是先落盘再广播，如果即没有日志也没有快照那就是有bug)
+                    // 1. 查出N条日志，所需要的日志全都在本地日志文件里没有被压缩
                     // 2. 查出1至N-1条日志，部分日志被压缩到快照里 or 就是只有那么多日志(一次批量查5条，但当前总共只写入了3条)
-                    // 3. 查出N条日志，所需要的日志全都在本地日志文件里没有被压缩
+                    // 3. 查出0条日志，需要的日志全部被压缩了(因为是先落盘再广播，如果既没有日志也没有快照那就是有bug)
                     if(logEntryList.size() == indexRange+1){
-                        // 查出了区间内的所有日志(case 3)
+                        // 查出了区间内的所有日志(case 1)
 
                         logger.info("find log size match!");
                         // preLog
@@ -444,7 +444,7 @@ public class LogModule {
 
                         appendEntriesRpcParam.setEntries(logEntryList);
                     } else if(logEntryList.isEmpty()){
-                        // 日志压缩把要同步的日志删除掉了，只能使用installSnapshotRpc了(case 1)
+                        // 日志压缩把要同步的日志删除掉了，只能使用installSnapshotRpc了(case 3)
                         logger.info("can not find and log entry，maybe delete for log compress");
                         // 快照压缩导致leader更早的index日志已经不存在了
 

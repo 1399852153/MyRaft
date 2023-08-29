@@ -272,7 +272,6 @@ public class RaftServer implements RaftService {
                     localPrevLogEntry.setLogTerm(-1);
                 }else{
                     // 日志里没有，但是有快照(把快照里记录的最后一条日志信息与leader的参数比对)
-                    // 如果匹配就ok，如果不匹配则返回不匹配，随后leader就会用installSnapshot来同步更早的日志过来
                     localPrevLogEntry.setLogIndex(raftSnapshot.getLastIncludedIndex());
                     localPrevLogEntry.setLogTerm(raftSnapshot.getLastIncludedTerm());
                 }
