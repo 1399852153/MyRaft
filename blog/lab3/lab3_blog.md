@@ -8,8 +8,8 @@
 2. 对于新加入集群的follower，leader与该follower之间完成日志同步会非常缓慢。
 3. 对于自身不进行持久化的状态机，raft节点重启后回放日志也会非常缓慢。
 #####
-考虑到绝大多数的状态机中存储的数据并不都是新增，而更多的是对已有数据的更新，则状态机中所存储的数据量通常会远小于raft日志的总大小。例如K/V数据库，对相同key的N次操作，只有最后一次操作是实际有效的，而在此之前的针对该key的raft日志其实已经没有保存的必要了。  
-因此raft的作者在论文的日志压缩一节中提出了几种日志压缩的算法(基于快照的、基于LSM树的)，raft选择了更容易理解和实现的、基于状态机快照的算法作为日志压缩的基础。
+考虑到绝大多数的状态机中存储的数据并不都是新增，而更多的是对已有数据的更新，则状态机中所存储的数据量通常会远小于raft日志的总大小。例如K/V数据库，对相同key的N次操作(整体更新操作)，只有最后一次操作是实际有效的，而在此之前的针对该key的raft日志其实已经没有保存的必要了。  
+因此raft的作者在论文的日志压缩一节中提到了几种日志压缩的算法(基于快照的、基于LSM树的)，raft选择了更容易理解和实现的、基于状态机快照的算法作为日志压缩的基础。
 ## 2. MyRaft日志压缩实现源码解析
 raft日志压缩实现中有以下几个关键点：
 * raft的各个节点可以按照某种策略独立的生成快照(比如定期检测日志文件大小是否超过阈值)，快照的主要内容是状态机当前瞬间所维护的所有数据的快照。  
@@ -50,6 +50,7 @@ public class RaftSnapshot {
     private byte[] snapshotData = new byte[0];
 }
 ```
+![img.png](img.png)
 ```java
 public class SnapshotModule {
     private static final Logger logger = LoggerFactory.getLogger(SnapshotModule.class);
@@ -349,7 +350,10 @@ public class SnapshotModule {
 ### 2.3 installSnapshot与日志复制时交互的改造
 ##### appendEntries日志同步逻辑leader侧的拓展
 相比lab2，在引入了快照压缩功能后，leader侧的日志复制逻辑需要进行一点小小的拓展。
-即当要向follower同步某一条日志时，对应日志可能已经被压缩掉了，因此此时需要改为使用installSnapshotRpc来完成快照的安装。  
+即当要向follower同步某一条日志时，对应日志可能已经被压缩掉了，因此此时需要改为使用installSnapshotRpc来完成快照的安装。 
+#####
+![img_1.png](img_1.png)
+#####
 ```java
    /**
      * leader向集群广播，令follower复制新的日志条目
