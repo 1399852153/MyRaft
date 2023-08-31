@@ -1343,7 +1343,7 @@ Snapshots are split into chunks for transmission; this gives the follower a sign
 快照被分割为块进行传输；每一块都带给了follower其存活的标识，因此follower可以重置其选举计时器。
 
 #####
-尽管服务器通常独立的生成快照，但leader必须偶哦二的向落后的follower发送快照。
+尽管服务器通常独立的生成快照，但leader必须偶尔的向落后的follower发送快照。
 当leader已经丢弃了需要发送给follower的下一个日志条目时就会发生这种情况。
 幸运的是，这种情况不太可能在正常操作中出现：一个跟上了leader的follower已经有了这个条目了。
 然而，一个异常慢的follower或者一个新加入集群的服务器(第6节)将没有这个条目。

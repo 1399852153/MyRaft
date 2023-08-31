@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import myraft.RaftServer;
 import myraft.api.command.EmptySetCommand;
 import myraft.api.command.SetCommand;
+import myraft.common.model.RaftSnapshot;
 import myraft.module.api.KVReplicationStateMachine;
 import myraft.module.model.LocalLogEntry;
 import myraft.util.util.MyRaftFileUtil;
@@ -43,6 +44,12 @@ public class SimpleReplicationStateMachine implements KVReplicationStateMachine 
         // 所以在这里需要清空
         kvMap = new ConcurrentHashMap<>();
         MyRaftFileUtil.writeInFile(persistenceFile, JsonUtil.obj2Str(kvMap));
+
+        RaftSnapshot raftSnapshot = raftServer.getSnapshotModule().readSnapshot();
+        if(raftSnapshot != null){
+            // 启动时，如果快照存在，将快照数据维护到状态机中
+            installSnapshot(raftSnapshot.getSnapshotData());
+        }
     }
 
     @Override

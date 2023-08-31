@@ -735,4 +735,4 @@ public class RpcCmdInteractiveClient {
 ## 5. 总结
 * 作为手写raft系列博客的第二篇，在博客的第1节简单介绍了raft的日志复制功能，第2节详细分析了MyRaft关于日志复制功能的实现源码，第3节通过分析日志复制过程中异常情况的处理来证明raft日志复制功能的正确性。
 * raft的日志复制功能是raft算法中最复杂的一部分，除了正常执行逻辑以外还包含了大量异常情况的处理。在博客中我结合MyRaft的源码尽可能的将自己理解的各种细节分享出来，希望能帮到对raft实现细节、正确性证明等相关内容感兴趣的读者。
-* 博客中展示的完整代码在我的github上：https://github.com/1399852153/MyRaft (release/release/lab2_log_replication分支)，希望能帮助到对raft算法感兴趣的小伙伴。内容如有错误，还请多多指教。
+* 博客中展示的完整代码在我的github上：https://github.com/1399852153/MyRaft (release/lab2_log_replication分支)。
